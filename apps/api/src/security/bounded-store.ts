@@ -15,8 +15,8 @@ export interface BoundedStoreOptions<V> {
   readonly isExpired: (value: V, now: number) => boolean;
   /** Milliseconds of restriction left (0 = inactive, safe to evict). */
   readonly remainingMs: (value: V, now: number) => number;
-  /** Called after an active entry had to be evicted; receives the running total. */
-  readonly onForcedEviction?: (total: number) => void;
+  /** Called after an active entry had to be evicted, with the running total and the entry. */
+  readonly onForcedEviction?: (total: number, key: string, value: V) => void;
   /** Run a sweep step every N writes (default 64). */
   readonly sweepEvery?: number;
   /** Entries visited per sweep step or eviction sample (default 512). */
@@ -80,7 +80,7 @@ export class BoundedStore<V> {
   }
 
   private makeRoom(now: number): void {
-    let victim: { key: string; remaining: number } | null = null;
+    let victim: { key: string; value: V; remaining: number } | null = null;
     for (const [key, value] of this.walk(this.options.scanLimit ?? 512)) {
       const remaining = this.options.isExpired(value, now)
         ? 0
@@ -89,12 +89,12 @@ export class BoundedStore<V> {
         this.entries.delete(key);
         return;
       }
-      if (!victim || remaining < victim.remaining) victim = { key, remaining };
+      if (!victim || remaining < victim.remaining) victim = { key, value, remaining };
     }
     if (victim) {
       this.entries.delete(victim.key);
       this.forcedEvictions += 1;
-      this.options.onForcedEviction?.(this.forcedEvictions);
+      this.options.onForcedEviction?.(this.forcedEvictions, victim.key, victim.value);
     }
   }
 }

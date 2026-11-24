@@ -280,19 +280,59 @@ describe('limiter store saturation', () => {
     expect(blocked).toEqual([]);
   });
 
-  it('remembers failure counts in the sketch after eviction', () => {
+  it('lets a successful login clear a lockout even after the entry was evicted', () => {
     const l = createBackoffLimiter({
-      freeAttempts: 3,
-      baseDelayMs: 1000,
-      maxDelayMs: 60_000,
+      freeAttempts: 1,
+      baseDelayMs: 60_000,
+      maxDelayMs: 600_000,
       maxKeys: 10,
     });
-    l.attempt('slow', 0);
-    l.attempt('slow', 0);
-    l.attempt('slow', 0); // three free failures recorded
-    for (let i = 0; i < 100; i += 1) l.attempt(`noise${i}`, 1);
-    expect(l.attempt('slow', 2)).toBe(0); // fourth attempt: allowed but starts the lockout
-    expect(l.attempt('slow', 3)).toBe(1);
+    l.attempt('victim', 0);
+    l.attempt('victim', 0);
+    for (let i = 0; i < 50; i += 1) {
+      for (let k = 0; k < 3; k += 1) l.attempt(`flood${i}`, 1000 + k * 120_000);
+    }
+    expect(l.attempt('victim', 61_000)).toBe(0); // lock lapsed (sketch still remembers failures)
+    l.reset('victim', 61_000); // password correct
+    expect(l.attempt('victim', 61_001)).toBe(0);
+    // Fresh count: one free failure, the next starts a 60 s lock, the one after is rejected.
+    expect(l.attempt('victim', 61_002)).toBe(0);
+    expect(l.attempt('victim', 61_003)).toBe(60);
+  });
+
+  it('never locks an untouched email when failures are spread across many emails', () => {
+    const l = createBackoffLimiter({
+      freeAttempts: 1,
+      baseDelayMs: 60_000,
+      maxDelayMs: 600_000,
+      maxKeys: 10,
+    });
+    for (let i = 0; i < 1000; i += 1) {
+      l.attempt(`spread${i}`, i);
+      l.attempt(`spread${i}`, i);
+    }
+    const blocked = Array.from({ length: 500 }, (_, i) => l.attempt(`untouched${i}`, 2000)).filter(
+      (w) => w > 0,
+    );
+    expect(blocked).toEqual([]);
+  });
+
+  it('ignores a saturated sketch instead of locking out unrelated users', () => {
+    const saturations: number[] = [];
+    const l = createBackoffLimiter({
+      freeAttempts: 1,
+      baseDelayMs: 60_000,
+      maxDelayMs: 600_000,
+      maxKeys: 10,
+      sketch: { width: 16 },
+      onSketchSaturated: (total) => saturations.push(total),
+    });
+    for (let i = 0; i < 200; i += 1) {
+      l.attempt(`flood${i}`, 0);
+      l.attempt(`flood${i}`, 0);
+    }
+    expect(l.attempt('bystander', 1)).toBe(0);
+    expect(saturations.length).toBeGreaterThan(0);
   });
 
   it('caps distinct emails per source address per window', () => {

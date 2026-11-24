@@ -10,6 +10,8 @@ import { CountMinSketch, type SketchOptions } from './count-min-sketch.js';
 export interface LimiterStoreOptions {
   readonly maxKeys?: number;
   readonly onForcedEviction?: (total: number) => void;
+  /** Called when the overflow sketch is saturated and its lockouts are ignored. */
+  readonly onSketchSaturated?: (total: number) => void;
 }
 
 export interface RateLimiter {
@@ -56,9 +58,10 @@ export function createRateLimiter(
  * login calls `reset`. The first `freeAttempts` attempts are free, then each further one
  * locks the key for base * 2^(n - freeAttempts - 1) ms, capped at `maxDelayMs`.
  *
- * Two layers: a precise bounded map (exact counts, may evict under pressure) and a
- * non-evictable count-min sketch that every attempt also updates. When a key is missing
- * from the map, the sketch's estimate is used, so evicting an entry never lifts a lockout.
+ * Two layers: a precise bounded map (exact state, may evict under pressure) and a
+ * fixed-size count-min sketch that receives only entries evicted while still active.
+ * A precise entry always wins; the sketch is consulted only when a key has none, so an
+ * evicted lockout stays enforced while ordinary failures never touch the sketch.
  */
 export interface BackoffLimiter {
   /** Seconds the key must still wait (attempt rejected, not recorded), or 0 (recorded). */
@@ -83,13 +86,20 @@ interface BackoffEntry {
 export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
   // History is forgotten once a key has been quiet for twice the maximum delay.
   const forgetAfter = options.maxDelayMs * 2;
+  const sketch = new CountMinSketch({
+    ...options.sketch,
+    decayMs: forgetAfter,
+    onSaturated: options.onSketchSaturated,
+  });
   const entries = new BoundedStore<BackoffEntry>({
     maxKeys: options.maxKeys ?? 50_000,
-    onForcedEviction: options.onForcedEviction,
+    onForcedEviction: (total, key, value) => {
+      sketch.record(key, value, value.lastFailure);
+      options.onForcedEviction?.(total);
+    },
     isExpired: (value, now) => now - value.lastFailure >= forgetAfter,
     remainingMs: (value, now) => Math.max(0, value.lockedUntil - now),
   });
-  const sketch = new CountMinSketch({ ...options.sketch, decayMs: forgetAfter });
 
   function current(key: string, now: number): { failures: number; lockedUntil: number } {
     const entry = entries.get(key);
@@ -108,12 +118,10 @@ export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
       const delay =
         excess > 0 ? Math.min(options.maxDelayMs, options.baseDelayMs * 2 ** (excess - 1)) : 0;
       entries.set(key, { failures, lockedUntil: now + delay, lastFailure: now }, now);
-      sketch.record(key, failures, now + delay, now);
       return 0;
     },
     reset(key, now = Date.now()) {
-      // Keep a precise zeroed entry so the sketch's history does not resurface while the
-      // entry stays cached; if it is later evicted the sketch errs on the strict side.
+      // A precise zeroed entry overrides any sketch history for this key.
       entries.set(key, { failures: 0, lockedUntil: 0, lastFailure: now }, now);
     },
     get size() {

@@ -39,6 +39,14 @@ function storeOptions(config: AppConfig, name: string, logger?: Logger): Limiter
         );
       }
     },
+    onSketchSaturated: (total) => {
+      if (total === 1 || total % 1000 === 0) {
+        logger?.error(
+          { limiter: name, saturatedReads: total },
+          'lockout sketch saturated; sketch lockouts ignored until it decays',
+        );
+      }
+    },
   };
 }
 
