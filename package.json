@@ -1,0 +1,41 @@
+{
+  "name": "rostra",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Rostra workforce scheduling with an in-house constraint solver",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev -w @rostra/api\" \"npm:dev -w @rostra/web\"",
+    "build": "npm run build -w @rostra/api && npm run build -w @rostra/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run test --workspaces --if-present",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "bench": "npm run bench -w @rostra/shared",
+    "db:migrate": "npm run db:migrate -w @rostra/api",
+    "db:seed": "npm run db:seed -w @rostra/api",
+    "db:reset": "npm run db:reset -w @rostra/api"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.49.1",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.0"
+  }
+}
