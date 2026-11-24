@@ -11,12 +11,14 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+/**
+ * Formatters are cached only under canonical IANA names, so the cache is bounded by
+ * the number of zones the runtime knows about no matter how callers spell them.
+ */
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
-function formatterFor(timeZone: string): Intl.DateTimeFormat {
-  const cached = formatterCache.get(timeZone);
-  if (cached) return cached;
-  const created = new Intl.DateTimeFormat('en-US', {
+function createFormatter(timeZone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat('en-US', {
     timeZone,
     hourCycle: 'h23',
     year: 'numeric',
@@ -26,8 +28,31 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
     minute: '2-digit',
     second: '2-digit',
   });
-  formatterCache.set(timeZone, created);
+}
+
+function formatterFor(timeZone: string): Intl.DateTimeFormat {
+  const cached = formatterCache.get(timeZone);
+  if (cached) return cached;
+  const created = createFormatter(timeZone);
+  const canonical = created.resolvedOptions().timeZone;
+  const existing = formatterCache.get(canonical);
+  if (existing) return existing;
+  formatterCache.set(canonical, created);
   return created;
+}
+
+/** Canonical IANA spelling of a zone (e.g. "america/new_york" -> "America/New_York"), or null. */
+export function canonicalTimeZone(timeZone: string): string | null {
+  try {
+    return createFormatter(timeZone).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+}
+
+/** Number of cached formatters; exposed for tests guarding the cache bound. */
+export function formatterCacheSize(): number {
+  return formatterCache.size;
 }
 
 export interface WallTime {
@@ -40,12 +65,7 @@ export interface WallTime {
 }
 
 export function isValidTimeZone(timeZone: string): boolean {
-  try {
-    formatterFor(timeZone);
-    return true;
-  } catch {
-    return false;
-  }
+  return canonicalTimeZone(timeZone) !== null;
 }
 
 export function wallTime(instantMs: number, timeZone: string): WallTime {

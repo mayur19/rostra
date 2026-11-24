@@ -2,6 +2,7 @@ import { resolveWeights } from '../model/constraints.js';
 import type { ConstraintWeights, Contract, ProblemInput } from '../model/types.js';
 import {
   addDays,
+  canonicalTimeZone,
   daysBetween,
   isValidDateKey,
   isValidTimeZone,
@@ -91,8 +92,14 @@ function validateContract(name: string, contract: Contract): string[] {
   return issues;
 }
 
-export function validateProblem(input: ProblemInput): string[] {
+function canonicalInput(input: ProblemInput): ProblemInput {
+  const timezone = canonicalTimeZone(input.timezone);
+  return timezone === null || timezone === input.timezone ? input : { ...input, timezone };
+}
+
+export function validateProblem(raw: ProblemInput): string[] {
   const issues: string[] = [];
+  const input = canonicalInput(raw);
   if (!isValidTimeZone(input.timezone)) issues.push(`unknown time zone "${input.timezone}"`);
   if (!isValidDateKey(input.weekStart)) issues.push(`invalid weekStart "${input.weekStart}"`);
   if (issues.length > 0) return issues;
@@ -205,7 +212,8 @@ function compileSlots(
 }
 
 /** Validates and indexes a problem so evaluation and search run on flat arrays. */
-export function compileProblem(input: ProblemInput): CompiledProblem {
+export function compileProblem(raw: ProblemInput): CompiledProblem {
+  const input = canonicalInput(raw);
   const issues = validateProblem(input);
   if (issues.length > 0) throw new ProblemValidationError(issues);
 

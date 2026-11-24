@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDays,
+  canonicalTimeZone,
   daysBetween,
+  formatterCacheSize,
+  timeZoneSchema,
   formatDateKey,
   isValidDateKey,
   isValidTimeZone,
@@ -88,5 +91,28 @@ describe('time zones', () => {
       expect(localDateKey(instant, NY)).toBe('2026-11-01');
       expect(localMinuteOfDay(instant, NY)).toBe(minute);
     }
+  });
+});
+
+describe('formatter cache bound', () => {
+  it('canonicalises zone spellings', () => {
+    expect(canonicalTimeZone('america/new_york')).toBe('America/New_York');
+    expect(canonicalTimeZone('utc')).toBe('UTC');
+    expect(canonicalTimeZone('Not/AZone')).toBeNull();
+  });
+
+  it('does not grow the cache for alternate spellings of one zone', () => {
+    localDateKey(0, 'Europe/Paris');
+    const before = formatterCacheSize();
+    const spellings = ['europe/paris', 'EUROPE/PARIS', 'Europe/paris', 'eUrOpE/pArIs'];
+    for (const spelling of spellings) {
+      expect(localDateKey(0, spelling)).toBe('1970-01-01');
+    }
+    expect(formatterCacheSize()).toBe(before);
+  });
+
+  it('normalises zones in the schema and rejects unknown ones', () => {
+    expect(timeZoneSchema.parse('america/chicago')).toBe('America/Chicago');
+    expect(timeZoneSchema.safeParse('Atlantis/Lost').success).toBe(false);
   });
 });

@@ -1,11 +1,23 @@
 import { z } from 'zod';
-import { isValidDateKey, isValidTimeZone } from '../time/zoned.js';
+import { canonicalTimeZone, isValidDateKey } from '../time/zoned.js';
 import { MAX_ITERATIONS } from '../solver/solve.js';
 
 export const dateKeySchema = z
   .string()
   .refine(isValidDateKey, 'Expected a calendar date YYYY-MM-DD');
-export const timeZoneSchema = z.string().min(1).refine(isValidTimeZone, 'Unknown IANA time zone');
+/** Accepts any spelling Intl understands and normalises it to the canonical IANA name. */
+export const timeZoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .transform((value, ctx) => {
+    const canonical = canonicalTimeZone(value);
+    if (canonical === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Unknown IANA time zone' });
+      return z.NEVER;
+    }
+    return canonical;
+  });
 export const instantSchema = z.string().datetime({ offset: true });
 export const skillCodeSchema = z
   .string()
