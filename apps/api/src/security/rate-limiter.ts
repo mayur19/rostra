@@ -1,4 +1,5 @@
 import { BoundedStore } from './bounded-store.js';
+import { CountMinSketch, type SketchOptions } from './count-min-sketch.js';
 
 /**
  * In-process authentication throttles (ADR-0006). They hold state per API process, so
@@ -50,16 +51,19 @@ export function createRateLimiter(
 }
 
 /**
- * Per-key progressive backoff for logins. `attempt` atomically checks the lockout and
- * records the attempt as a failure (pessimistic reservation); a successful login calls
- * `reset`. The first `freeAttempts` attempts are free, then each further one locks the key
- * for base * 2^(n - freeAttempts - 1) ms, capped at `maxDelayMs` so an attacker can only
- * lock a victim out for a bounded time.
+ * Per-key progressive backoff for logins (ADR-0017). `attempt` atomically checks the
+ * lockout and records the attempt as a failure (pessimistic reservation); a successful
+ * login calls `reset`. The first `freeAttempts` attempts are free, then each further one
+ * locks the key for base * 2^(n - freeAttempts - 1) ms, capped at `maxDelayMs`.
+ *
+ * Two layers: a precise bounded map (exact counts, may evict under pressure) and a
+ * non-evictable count-min sketch that every attempt also updates. When a key is missing
+ * from the map, the sketch's estimate is used, so evicting an entry never lifts a lockout.
  */
 export interface BackoffLimiter {
   /** Seconds the key must still wait (attempt rejected, not recorded), or 0 (recorded). */
   attempt(key: string, now?: number): number;
-  reset(key: string): void;
+  reset(key: string, now?: number): void;
   readonly size: number;
 }
 
@@ -67,6 +71,7 @@ export interface BackoffOptions extends LimiterStoreOptions {
   readonly freeAttempts: number;
   readonly baseDelayMs: number;
   readonly maxDelayMs: number;
+  readonly sketch?: Omit<SketchOptions, 'decayMs'>;
 }
 
 interface BackoffEntry {
@@ -84,23 +89,32 @@ export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
     isExpired: (value, now) => now - value.lastFailure >= forgetAfter,
     remainingMs: (value, now) => Math.max(0, value.lockedUntil - now),
   });
+  const sketch = new CountMinSketch({ ...options.sketch, decayMs: forgetAfter });
+
+  function current(key: string, now: number): { failures: number; lockedUntil: number } {
+    const entry = entries.get(key);
+    if (entry) {
+      return now - entry.lastFailure < forgetAfter ? entry : { failures: 0, lockedUntil: 0 };
+    }
+    return sketch.read(key, now);
+  }
 
   return {
     attempt(key, now = Date.now()) {
-      const existing = entries.get(key);
-      const previous = existing && now - existing.lastFailure < forgetAfter ? existing : undefined;
-      if (previous && previous.lockedUntil > now) {
-        return Math.ceil((previous.lockedUntil - now) / 1000);
-      }
-      const failures = (previous?.failures ?? 0) + 1;
+      const previous = current(key, now);
+      if (previous.lockedUntil > now) return Math.ceil((previous.lockedUntil - now) / 1000);
+      const failures = previous.failures + 1;
       const excess = failures - options.freeAttempts;
       const delay =
         excess > 0 ? Math.min(options.maxDelayMs, options.baseDelayMs * 2 ** (excess - 1)) : 0;
       entries.set(key, { failures, lockedUntil: now + delay, lastFailure: now }, now);
+      sketch.record(key, failures, now + delay, now);
       return 0;
     },
-    reset(key) {
-      entries.delete(key);
+    reset(key, now = Date.now()) {
+      // Keep a precise zeroed entry so the sketch's history does not resurface while the
+      // entry stays cached; if it is later evicted the sketch errs on the strict side.
+      entries.set(key, { failures: 0, lockedUntil: 0, lastFailure: now }, now);
     },
     get size() {
       return entries.size;

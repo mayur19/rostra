@@ -243,6 +243,58 @@ describe('limiter store saturation', () => {
     expect(l.size).toBe(2);
   });
 
+  it('keeps a victim locked out after a flood evicts its map entry (sketch layer)', () => {
+    const evictions: number[] = [];
+    const l = createBackoffLimiter({
+      freeAttempts: 1,
+      baseDelayMs: 60_000,
+      maxDelayMs: 600_000,
+      maxKeys: 10,
+      onForcedEviction: (total) => evictions.push(total),
+    });
+    l.attempt('victim', 0);
+    l.attempt('victim', 0); // locked until 60 s
+    // Flood with keys locked for longer, so the victim has the least time remaining.
+    for (let i = 0; i < 200; i += 1) {
+      for (let k = 0; k < 3; k += 1) l.attempt(`flood${i}`, 1000 + k * 120_000);
+    }
+    expect(evictions.length).toBeGreaterThan(0);
+    expect(l.size).toBeLessThanOrEqual(10);
+    expect(l.attempt('victim', 2000)).toBe(58);
+  });
+
+  it('does not block unrelated users during a flood', () => {
+    const l = createBackoffLimiter({
+      freeAttempts: 1,
+      baseDelayMs: 60_000,
+      maxDelayMs: 600_000,
+      maxKeys: 10,
+    });
+    for (let i = 0; i < 2000; i += 1) {
+      l.attempt(`flood${i}`, 0);
+      l.attempt(`flood${i}`, 0);
+    }
+    const blocked = Array.from({ length: 200 }, (_, i) =>
+      l.attempt(`user${i}@example.org`, 1),
+    ).filter((w) => w > 0);
+    expect(blocked).toEqual([]);
+  });
+
+  it('remembers failure counts in the sketch after eviction', () => {
+    const l = createBackoffLimiter({
+      freeAttempts: 3,
+      baseDelayMs: 1000,
+      maxDelayMs: 60_000,
+      maxKeys: 10,
+    });
+    l.attempt('slow', 0);
+    l.attempt('slow', 0);
+    l.attempt('slow', 0); // three free failures recorded
+    for (let i = 0; i < 100; i += 1) l.attempt(`noise${i}`, 1);
+    expect(l.attempt('slow', 2)).toBe(0); // fourth attempt: allowed but starts the lockout
+    expect(l.attempt('slow', 3)).toBe(1);
+  });
+
   it('caps distinct emails per source address per window', () => {
     const limiter = createDistinctKeyLimiter(2, 60_000);
     expect(limiter.admit('ip', 'a', 0)).toBe(0);
@@ -280,6 +332,27 @@ describe('flooding from one address through the API', () => {
 
     expect((await login(ctx, 'victim@example.org', '192.0.2.3')).statusCode).toBe(429);
     expect((await login(ctx, 'bystander@example.org', '198.51.100.40')).statusCode).toBe(401);
+  });
+});
+
+describe('lockouts survive store eviction through the API', () => {
+  it('keeps the victim locked and lets bystanders in while many sources flood', async () => {
+    const ctx = await createTestContext({
+      LIMITER_MAX_KEYS: '10',
+      LOGIN_IP_RATE_LIMIT_MAX: '1000',
+      LOGIN_RATE_LIMIT_MAX: '1000',
+      LOGIN_EMAIL_FREE_ATTEMPTS: '1',
+      LOGIN_EMAIL_BACKOFF_BASE_MS: '60000',
+    });
+    await login(ctx, 'victim@example.org', '192.0.2.1');
+    await login(ctx, 'victim@example.org', '192.0.2.1');
+    expect((await login(ctx, 'victim@example.org', '192.0.2.2')).statusCode).toBe(429);
+    for (let i = 0; i < 15; i += 1) {
+      for (let k = 0; k < 2; k += 1) await login(ctx, `flood${i}@example.org`, `198.18.0.${i + 1}`);
+    }
+    expect((await login(ctx, 'victim@example.org', '192.0.2.3')).statusCode).toBe(429);
+    expect((await login(ctx, 'bystander@example.org', '192.0.2.4')).statusCode).toBe(401);
+    await ctx.close();
   });
 });
 
