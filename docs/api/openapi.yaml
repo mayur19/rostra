@@ -1,0 +1,2397 @@
+# Rostra API: full target surface. x-status marks implemented vs pending operations.
+openapi: '3.1.0'
+info:
+  title: 'Rostra API'
+  version: '0.1.0'
+  description: 'Workforce scheduling with an in-house constraint solver. Every operation carries x-status (implemented | pending); pending operations answer 501 NOT_IMPLEMENTED with the backlog ticket in error.details.ticket.'
+  license:
+    name: 'MIT'
+servers:
+  - url: 'http://127.0.0.1:4108'
+    description: 'Local development'
+security:
+  - sessionCookie: []
+    csrfHeader: []
+tags:
+  - name: 'Platform'
+  - name: 'Auth'
+  - name: 'Audit'
+  - name: 'Organization'
+  - name: 'Workforce'
+  - name: 'Rosters'
+  - name: 'Rules'
+  - name: 'Demand'
+  - name: 'Time off'
+  - name: 'Notifications'
+  - name: 'Marketplace'
+  - name: 'Time and attendance'
+  - name: 'Payroll and reports'
+  - name: 'Self-service'
+paths:
+  '/api/v1/audit-logs':
+    get:
+      operationId: 'listAuditLogs'
+      summary: 'Audit trail for the organization'
+      tags:
+        - 'Audit'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Limit'
+        - '$ref': '#/components/parameters/Offset'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'array'
+                        items:
+                          '$ref': '#/components/schemas/AuditEntry'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/auth/csrf':
+    get:
+      operationId: 'getCsrf'
+      summary: 'Issue or return the CSRF token (sets rostra_csrf cookie)'
+      tags:
+        - 'Auth'
+      x-status: 'implemented'
+      security: []
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/CsrfToken'
+        400:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/auth/login':
+    post:
+      operationId: 'login'
+      summary: 'Sign in; sets HttpOnly session cookie and rotates CSRF token'
+      tags:
+        - 'Auth'
+      x-status: 'implemented'
+      description: 'Throttled per IP, per IP+email, per distinct emails per source, and per email with progressive backoff (ADR-0006).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/LoginRequest'
+      security: []
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/CsrfToken'
+        400:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+        429:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/auth/logout':
+    post:
+      operationId: 'logout'
+      summary: 'Sign out and delete the session'
+      tags:
+        - 'Auth'
+      x-status: 'implemented'
+      responses:
+        204:
+          description: 'No content'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/auth/me':
+    get:
+      operationId: 'getMe'
+      summary: 'Current user, organization and permissions'
+      tags:
+        - 'Auth'
+      x-status: 'implemented'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Me'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/auth/password-reset':
+    post:
+      operationId: 'postPasswordResetRequest'
+      summary: 'Password reset request (planned)'
+      tags:
+        - 'Auth'
+      x-status: 'pending'
+      x-ticket: 'RO-104'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-104. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/auth/password-reset/confirm':
+    post:
+      operationId: 'postPasswordResetConfirmation'
+      summary: 'Password reset confirmation (planned)'
+      tags:
+        - 'Auth'
+      x-status: 'pending'
+      x-ticket: 'RO-104'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-104. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/auth/register':
+    post:
+      operationId: 'register'
+      summary: 'Register an organization and its owner; opens a session'
+      tags:
+        - 'Auth'
+      x-status: 'implemented'
+      description: 'Rate-limited per client address. A duplicate email returns 400 REGISTRATION_FAILED with a generic message (email-verified sign-up is RO-106).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/RegisterRequest'
+      security: []
+      responses:
+        201:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/CsrfToken'
+        400:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+        429:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/auth/sessions':
+    get:
+      operationId: 'getSessionManagement'
+      summary: 'Session management (planned)'
+      tags:
+        - 'Auth'
+      x-status: 'pending'
+      x-ticket: 'RO-105'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-105. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/auth/sessions/{id}':
+    delete:
+      operationId: 'deleteSessionRevocation'
+      summary: 'Session revocation (planned)'
+      tags:
+        - 'Auth'
+      x-status: 'pending'
+      x-ticket: 'RO-105'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-105. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/certifications/expiring':
+    get:
+      operationId: 'getExpiringCertificationsReport'
+      summary: 'Expiring certifications report (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-122'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-122. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/constraint-weights':
+    put:
+      operationId: 'putPerOrganizationConstraintWeights'
+      summary: 'Per-organization constraint weights (planned)'
+      tags:
+        - 'Rules'
+      x-status: 'pending'
+      x-ticket: 'RO-165'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-165. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/constraints':
+    get:
+      operationId: 'listConstraints'
+      summary: 'Constraint catalog and default weights'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/ConstraintCatalog'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/coverage-requirements':
+    get:
+      operationId: 'getCoverageRequirements'
+      summary: 'Coverage requirements (planned)'
+      tags:
+        - 'Demand'
+      x-status: 'pending'
+      x-ticket: 'RO-142'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-142. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    put:
+      operationId: 'putCoverageRequirementUpdate'
+      summary: 'Coverage requirement update (planned)'
+      tags:
+        - 'Demand'
+      x-status: 'pending'
+      x-ticket: 'RO-142'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-142. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/departments':
+    get:
+      operationId: 'getDepartments'
+      summary: 'Departments (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-111'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-111. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    post:
+      operationId: 'postDepartmentCreation'
+      summary: 'Department creation (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-111'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-111. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/employees':
+    get:
+      operationId: 'listEmployees'
+      summary: 'List active employees'
+      tags:
+        - 'Workforce'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Limit'
+        - '$ref': '#/components/parameters/Offset'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'array'
+                        items:
+                          '$ref': '#/components/schemas/Employee'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+    post:
+      operationId: 'createEmployee'
+      summary: 'Create an employee with contract, skills, unavailability and preferences'
+      tags:
+        - 'Workforce'
+      x-status: 'implemented'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/EmployeeCreate'
+      responses:
+        201:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Employee'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/employees/import':
+    post:
+      operationId: 'postEmployeeCsvImport'
+      summary: 'Employee CSV import (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-121'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-121. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/employees/{id}':
+    get:
+      operationId: 'getEmployee'
+      summary: 'Get an employee'
+      tags:
+        - 'Workforce'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Employee'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+    patch:
+      operationId: 'updateEmployee'
+      summary: 'Partially update an employee (merged, re-validated, version bumped)'
+      tags:
+        - 'Workforce'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/EmployeeUpdate'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Employee'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+    delete:
+      operationId: 'deleteEmployeeArchiving'
+      summary: 'Employee archiving (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-120'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-120. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/employees/{id}/availability':
+    get:
+      operationId: 'getRecurringAvailability'
+      summary: 'Recurring availability (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-130'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-130. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+    put:
+      operationId: 'putRecurringAvailabilityUpdate'
+      summary: 'Recurring availability update (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-130'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-130. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/employees/{id}/contracts':
+    get:
+      operationId: 'getVersionedContracts'
+      summary: 'Versioned contracts (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-113'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-113. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+    post:
+      operationId: 'postContractVersioning'
+      summary: 'Contract versioning (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-113'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-113. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/forecasts':
+    post:
+      operationId: 'postDemandForecasting'
+      summary: 'Demand forecasting (planned)'
+      tags:
+        - 'Demand'
+      x-status: 'pending'
+      x-ticket: 'RO-140'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-140. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/forecasts/{id}':
+    get:
+      operationId: 'getForecastRetrieval'
+      summary: 'Forecast retrieval (planned)'
+      tags:
+        - 'Demand'
+      x-status: 'pending'
+      x-ticket: 'RO-140'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-140. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/health':
+    get:
+      operationId: 'getHealth'
+      summary: 'Liveness probe'
+      tags:
+        - 'Platform'
+      x-status: 'implemented'
+      security: []
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'object'
+                        properties:
+                          status:
+                            type: 'string'
+                          uptimeSeconds:
+                            type: 'integer'
+        400:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/historical-volumes/import':
+    post:
+      operationId: 'postHistoricalVolumeImport'
+      summary: 'Historical volume import (planned)'
+      tags:
+        - 'Demand'
+      x-status: 'pending'
+      x-ticket: 'RO-141'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-141. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/kiosk/punch':
+    post:
+      operationId: 'postKioskPunchInout'
+      summary: 'Kiosk punch in/out (planned)'
+      tags:
+        - 'Time and attendance'
+      x-status: 'pending'
+      x-ticket: 'RO-190'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-190. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/kiosks':
+    post:
+      operationId: 'postKioskRegistration'
+      summary: 'Kiosk registration (planned)'
+      tags:
+        - 'Time and attendance'
+      x-status: 'pending'
+      x-ticket: 'RO-192'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-192. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/labor-rule-sets':
+    get:
+      operationId: 'getLaborRuleSets'
+      summary: 'Labor rule sets (planned)'
+      tags:
+        - 'Rules'
+      x-status: 'pending'
+      x-ticket: 'RO-162'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-162. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    post:
+      operationId: 'postLaborRuleSetCreation'
+      summary: 'Labor rule set creation (planned)'
+      tags:
+        - 'Rules'
+      x-status: 'pending'
+      x-ticket: 'RO-162'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-162. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/locations':
+    get:
+      operationId: 'getLocations'
+      summary: 'Locations (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-110'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-110. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    post:
+      operationId: 'postLocationCreation'
+      summary: 'Location creation (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-110'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-110. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/me/schedule':
+    get:
+      operationId: 'getPersonalSchedule'
+      summary: 'Personal schedule (planned)'
+      tags:
+        - 'Self-service'
+      x-status: 'pending'
+      x-ticket: 'RO-230'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-230. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/me/schedule.ics':
+    get:
+      operationId: 'getPersonalIcalendarFeed'
+      summary: 'Personal iCalendar feed (planned)'
+      tags:
+        - 'Self-service'
+      x-status: 'pending'
+      x-ticket: 'RO-231'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-231. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/notifications':
+    get:
+      operationId: 'getNotifications'
+      summary: 'Notifications (planned)'
+      tags:
+        - 'Notifications'
+      x-status: 'pending'
+      x-ticket: 'RO-171'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-171. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/notifications/{id}/read':
+    post:
+      operationId: 'postNotificationReadState'
+      summary: 'Notification read state (planned)'
+      tags:
+        - 'Notifications'
+      x-status: 'pending'
+      x-ticket: 'RO-171'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-171. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/open-shifts':
+    get:
+      operationId: 'getOpenShiftBoard'
+      summary: 'Open shift board (planned)'
+      tags:
+        - 'Marketplace'
+      x-status: 'pending'
+      x-ticket: 'RO-183'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-183. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/open-shifts/{id}/claim':
+    post:
+      operationId: 'postOpenShiftClaims'
+      summary: 'Open shift claims (planned)'
+      tags:
+        - 'Marketplace'
+      x-status: 'pending'
+      x-ticket: 'RO-183'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-183. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/organization':
+    get:
+      operationId: 'getOrganizationSettings'
+      summary: 'Organization settings (planned)'
+      tags:
+        - 'Organization'
+      x-status: 'pending'
+      x-ticket: 'RO-101'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-101. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    patch:
+      operationId: 'patchOrganizationSettingsUpdate'
+      summary: 'Organization settings update (planned)'
+      tags:
+        - 'Organization'
+      x-status: 'pending'
+      x-ticket: 'RO-101'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-101. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/payroll-exports':
+    post:
+      operationId: 'postPayrollCsvExport'
+      summary: 'Payroll CSV export (planned)'
+      tags:
+        - 'Payroll and reports'
+      x-status: 'pending'
+      x-ticket: 'RO-210'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-210. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/payroll-exports/{id}/download':
+    get:
+      operationId: 'getPayrollExportDownload'
+      summary: 'Payroll export download (planned)'
+      tags:
+        - 'Payroll and reports'
+      x-status: 'pending'
+      x-ticket: 'RO-210'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-210. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/positions':
+    get:
+      operationId: 'getPositions'
+      summary: 'Positions (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-112'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-112. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    post:
+      operationId: 'postPositionCreation'
+      summary: 'Position creation (planned)'
+      tags:
+        - 'Workforce'
+      x-status: 'pending'
+      x-ticket: 'RO-112'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-112. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/punches':
+    get:
+      operationId: 'getPunchRecords'
+      summary: 'Punch records (planned)'
+      tags:
+        - 'Time and attendance'
+      x-status: 'pending'
+      x-ticket: 'RO-191'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-191. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/ready':
+    get:
+      operationId: 'getReady'
+      summary: 'Readiness probe (database reachable and migrated)'
+      tags:
+        - 'Platform'
+      x-status: 'implemented'
+      security: []
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'object'
+                        properties:
+                          status:
+                            type: 'string'
+                          database:
+                            type: 'string'
+                          migrations:
+                            type: 'integer'
+        400:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/reports/compliance':
+    get:
+      operationId: 'getComplianceReport'
+      summary: 'Compliance report (planned)'
+      tags:
+        - 'Payroll and reports'
+      x-status: 'pending'
+      x-ticket: 'RO-222'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-222. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/reports/fairness':
+    get:
+      operationId: 'getFairnessReport'
+      summary: 'Fairness report (planned)'
+      tags:
+        - 'Payroll and reports'
+      x-status: 'pending'
+      x-ticket: 'RO-220'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-220. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/reports/labor-cost':
+    get:
+      operationId: 'getLaborCostReport'
+      summary: 'Labor cost report (planned)'
+      tags:
+        - 'Payroll and reports'
+      x-status: 'pending'
+      x-ticket: 'RO-221'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-221. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/rosters':
+    get:
+      operationId: 'listRosters'
+      summary: 'List rosters'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'array'
+                        items:
+                          '$ref': '#/components/schemas/Roster'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+    post:
+      operationId: 'createRoster'
+      summary: 'Create a weekly roster'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/RosterCreate'
+      responses:
+        201:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Roster'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}':
+    get:
+      operationId: 'getRoster'
+      summary: 'Get a roster'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Roster'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/assignments':
+    put:
+      operationId: 'replaceAssignments'
+      summary: 'Replace assignments with a manual set (per-row pinned flag)'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/AssignmentsReplace'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Schedule'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+        409:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/evaluate':
+    post:
+      operationId: 'evaluateRoster'
+      summary: 'Evaluate proposed assignments without saving (live violation feedback)'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/EvaluateRequest'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Evaluation'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/explain':
+    post:
+      operationId: 'postWhatIfExplanations'
+      summary: 'What-if explanations (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-161'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-161. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/rosters/{id}/publish':
+    post:
+      operationId: 'postRosterPublishing'
+      summary: 'Roster publishing (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-170'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-170. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/rosters/{id}/schedule':
+    get:
+      operationId: 'getSchedule'
+      summary: 'Current assignments with full evaluation'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Schedule'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/shifts':
+    get:
+      operationId: 'listShifts'
+      summary: 'List shift demand'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'array'
+                        items:
+                          '$ref': '#/components/schemas/Shift'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+        409:
+          '$ref': '#/components/responses/Error'
+    post:
+      operationId: 'createShift'
+      summary: 'Add shift demand (must start within the roster week)'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/ShiftCreate'
+      responses:
+        201:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Shift'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+        409:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/shifts/from-coverage':
+    post:
+      operationId: 'postShiftGenerationFromCoverage'
+      summary: 'Shift generation from coverage (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-143'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-143. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/rosters/{id}/shifts/from-templates':
+    post:
+      operationId: 'postShiftGenerationFromTemplates'
+      summary: 'Shift generation from templates (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-151'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-151. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/rosters/{id}/shifts/{shiftId}':
+    delete:
+      operationId: 'deleteShift'
+      summary: 'Delete shift demand'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+        - '$ref': '#/components/parameters/ShiftId'
+      responses:
+        204:
+          description: 'No content'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+        409:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/solve':
+    post:
+      operationId: 'solveRoster'
+      summary: 'Run the solver (greedy + simulated annealing) and save the result'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      description: 'Deterministic for a given seed and iteration budget. Runs synchronously under the roster row lock (ADR-0014); pinned assignments are kept when keepPinned is true.'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/SolveRequest'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'object'
+                        properties:
+                          run:
+                            '$ref': '#/components/schemas/SolverRun'
+                          schedule:
+                            '$ref': '#/components/schemas/Schedule'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+        409:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/solver-jobs':
+    post:
+      operationId: 'postAsynchronousSolverJobs'
+      summary: 'Asynchronous solver jobs (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-160'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-160. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/rosters/{id}/solver-runs':
+    get:
+      operationId: 'listSolverRuns'
+      summary: 'Solver run history'
+      tags:
+        - 'Rosters'
+      x-status: 'implemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'array'
+                        items:
+                          '$ref': '#/components/schemas/SolverRun'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/rosters/{id}/versions':
+    get:
+      operationId: 'getRosterVersions'
+      summary: 'Roster versions (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-173'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-173. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/shift-templates':
+    get:
+      operationId: 'getShiftTemplates'
+      summary: 'Shift templates (planned)'
+      tags:
+        - 'Demand'
+      x-status: 'pending'
+      x-ticket: 'RO-150'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-150. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    post:
+      operationId: 'postShiftTemplateCreation'
+      summary: 'Shift template creation (planned)'
+      tags:
+        - 'Demand'
+      x-status: 'pending'
+      x-ticket: 'RO-150'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-150. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/skills':
+    get:
+      operationId: 'listSkills'
+      summary: 'List skills'
+      tags:
+        - 'Workforce'
+      x-status: 'implemented'
+      responses:
+        200:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        type: 'array'
+                        items:
+                          '$ref': '#/components/schemas/Skill'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+    post:
+      operationId: 'createSkill'
+      summary: 'Create a skill'
+      tags:
+        - 'Workforce'
+      x-status: 'implemented'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              '$ref': '#/components/schemas/SkillCreate'
+      responses:
+        201:
+          description: 'OK'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - '$ref': '#/components/schemas/Envelope'
+                  - type: 'object'
+                    properties:
+                      data:
+                        '$ref': '#/components/schemas/Skill'
+        400:
+          '$ref': '#/components/responses/Error'
+        401:
+          '$ref': '#/components/responses/Error'
+        403:
+          '$ref': '#/components/responses/Error'
+        404:
+          '$ref': '#/components/responses/Error'
+        422:
+          '$ref': '#/components/responses/Error'
+  '/api/v1/solver-jobs/{id}':
+    get:
+      operationId: 'getSolverJobStatus'
+      summary: 'Solver job status (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-160'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-160. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+    delete:
+      operationId: 'deleteSolverJobCancellation'
+      summary: 'Solver job cancellation (planned)'
+      tags:
+        - 'Rosters'
+      x-status: 'pending'
+      x-ticket: 'RO-160'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-160. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/swap-requests':
+    get:
+      operationId: 'getShiftSwapRequests'
+      summary: 'Shift swap requests (planned)'
+      tags:
+        - 'Marketplace'
+      x-status: 'pending'
+      x-ticket: 'RO-180'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-180. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    post:
+      operationId: 'postShiftSwapRequestCreation'
+      summary: 'Shift swap request creation (planned)'
+      tags:
+        - 'Marketplace'
+      x-status: 'pending'
+      x-ticket: 'RO-180'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-180. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/swap-requests/{id}/accept':
+    post:
+      operationId: 'postShiftSwapAcceptance'
+      summary: 'Shift swap acceptance (planned)'
+      tags:
+        - 'Marketplace'
+      x-status: 'pending'
+      x-ticket: 'RO-181'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-181. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/swap-requests/{id}/approve':
+    post:
+      operationId: 'postShiftSwapApproval'
+      summary: 'Shift swap approval (planned)'
+      tags:
+        - 'Marketplace'
+      x-status: 'pending'
+      x-ticket: 'RO-182'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-182. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/time-off-requests':
+    get:
+      operationId: 'getTimeOffRequests'
+      summary: 'Time-off requests (planned)'
+      tags:
+        - 'Time off'
+      x-status: 'pending'
+      x-ticket: 'RO-131'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-131. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+    post:
+      operationId: 'postTimeOffRequestCreation'
+      summary: 'Time-off request creation (planned)'
+      tags:
+        - 'Time off'
+      x-status: 'pending'
+      x-ticket: 'RO-131'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-131. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/time-off-requests/{id}/approve':
+    post:
+      operationId: 'postTimeOffApproval'
+      summary: 'Time-off approval (planned)'
+      tags:
+        - 'Time off'
+      x-status: 'pending'
+      x-ticket: 'RO-132'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-132. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/time-off-requests/{id}/reject':
+    post:
+      operationId: 'postTimeOffRejection'
+      summary: 'Time-off rejection (planned)'
+      tags:
+        - 'Time off'
+      x-status: 'pending'
+      x-ticket: 'RO-132'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-132. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/timesheets':
+    get:
+      operationId: 'getTimesheets'
+      summary: 'Timesheets (planned)'
+      tags:
+        - 'Time and attendance'
+      x-status: 'pending'
+      x-ticket: 'RO-200'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-200. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/timesheets/{id}/approve':
+    post:
+      operationId: 'postTimesheetApproval'
+      summary: 'Timesheet approval (planned)'
+      tags:
+        - 'Time and attendance'
+      x-status: 'pending'
+      x-ticket: 'RO-201'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-201. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+  '/api/v1/users':
+    get:
+      operationId: 'getUserManagement'
+      summary: 'User management (planned)'
+      tags:
+        - 'Organization'
+      x-status: 'pending'
+      x-ticket: 'RO-103'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-103. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/users/invitations':
+    post:
+      operationId: 'postUserInvitations'
+      summary: 'User invitations (planned)'
+      tags:
+        - 'Organization'
+      x-status: 'pending'
+      x-ticket: 'RO-102'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-102. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/users/invitations/accept':
+    post:
+      operationId: 'postInvitationAcceptance'
+      summary: 'Invitation acceptance (planned)'
+      tags:
+        - 'Organization'
+      x-status: 'pending'
+      x-ticket: 'RO-102'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-102. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+  '/api/v1/users/{id}':
+    patch:
+      operationId: 'patchUserRoleManagement'
+      summary: 'User role management (planned)'
+      tags:
+        - 'Organization'
+      x-status: 'pending'
+      x-ticket: 'RO-103'
+      description: 'Planned; currently answers 501 NOT_IMPLEMENTED with details.ticket = RO-103. See docs/planning/backlog.md.'
+      responses:
+        501:
+          '$ref': '#/components/responses/NotImplemented'
+      parameters:
+        - '$ref': '#/components/parameters/Id'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: 'apiKey'
+      in: 'cookie'
+      name: 'rostra_session'
+      description: 'Opaque HttpOnly SameSite=Lax session token; stored server-side as an HMAC.'
+    csrfHeader:
+      type: 'apiKey'
+      in: 'header'
+      name: 'x-csrf-token'
+      description: 'Required on POST/PUT/PATCH/DELETE; must equal the rostra_csrf cookie and the session token.'
+  parameters:
+    Id:
+      name: 'id'
+      in: 'path'
+      required: true
+      schema:
+        type: 'string'
+        format: 'uuid'
+    ShiftId:
+      name: 'shiftId'
+      in: 'path'
+      required: true
+      schema:
+        type: 'string'
+        format: 'uuid'
+    Limit:
+      name: 'limit'
+      in: 'query'
+      schema:
+        type: 'integer'
+        minimum: 1
+        maximum: 200
+        default: 50
+    Offset:
+      name: 'offset'
+      in: 'query'
+      schema:
+        type: 'integer'
+        minimum: 0
+        default: 0
+  responses:
+    Error:
+      description: 'Error envelope'
+      content:
+        application/json:
+          schema:
+            '$ref': '#/components/schemas/Envelope'
+    NotImplemented:
+      description: 'Planned endpoint'
+      content:
+        application/json:
+          schema:
+            '$ref': '#/components/schemas/Envelope'
+          example:
+            data: null
+            error:
+              code: 'NOT_IMPLEMENTED'
+              message: 'Roster publishing is not implemented yet'
+              details:
+                ticket: 'RO-170'
+  schemas:
+    Envelope:
+      type: 'object'
+      required:
+        - 'data'
+        - 'error'
+      properties:
+        data: {}
+        error:
+          oneOf:
+            - type: 'null'
+            - '$ref': '#/components/schemas/Error'
+        meta:
+          '$ref': '#/components/schemas/PageMeta'
+    Error:
+      type: 'object'
+      required:
+        - 'code'
+        - 'message'
+      properties:
+        code:
+          type: 'string'
+          examples:
+            - 'VALIDATION_FAILED'
+            - 'UNAUTHORIZED'
+            - 'FORBIDDEN'
+            - 'NOT_FOUND'
+            - 'CONFLICT'
+            - 'RATE_LIMITED'
+            - 'CSRF_FAILED'
+            - 'INVALID_CREDENTIALS'
+            - 'INVALID_PROBLEM'
+            - 'REGISTRATION_FAILED'
+            - 'NOT_IMPLEMENTED'
+            - 'INTERNAL'
+        message:
+          type: 'string'
+        details: {}
+    PageMeta:
+      type: 'object'
+      properties:
+        total:
+          type: 'integer'
+        limit:
+          type: 'integer'
+        offset:
+          type: 'integer'
+    CsrfToken:
+      type: 'object'
+      properties:
+        csrfToken:
+          type: 'string'
+    RegisterRequest:
+      type: 'object'
+      required:
+        - 'organizationName'
+        - 'name'
+        - 'email'
+        - 'password'
+      properties:
+        organizationName:
+          type: 'string'
+          minLength: 2
+          maxLength: 120
+        name:
+          type: 'string'
+        email:
+          type: 'string'
+          format: 'email'
+        password:
+          type: 'string'
+          minLength: 12
+          maxLength: 200
+        timezone:
+          type: 'string'
+          description: 'IANA zone, any spelling; stored canonical'
+          default: 'UTC'
+    LoginRequest:
+      type: 'object'
+      required:
+        - 'email'
+        - 'password'
+      properties:
+        email:
+          type: 'string'
+          format: 'email'
+        password:
+          type: 'string'
+    Me:
+      type: 'object'
+      properties:
+        user:
+          type: 'object'
+          properties:
+            id:
+              type: 'string'
+              format: 'uuid'
+            email:
+              type: 'string'
+            name:
+              type: 'string'
+            role:
+              '$ref': '#/components/schemas/Role'
+        organization:
+          type: 'object'
+          properties:
+            id:
+              type: 'string'
+              format: 'uuid'
+            name:
+              type: 'string'
+            timezone:
+              type: 'string'
+        permissions:
+          type: 'array'
+          items:
+            type: 'string'
+        csrfToken:
+          type: 'string'
+    Role:
+      type: 'string'
+      enum:
+        - 'owner'
+        - 'admin'
+        - 'scheduler'
+        - 'manager'
+        - 'employee'
+    AuditEntry:
+      type: 'object'
+      properties:
+        id:
+          type: 'integer'
+        actorUserId:
+          type:
+            - 'string'
+            - 'null'
+        action:
+          type: 'string'
+        entityType:
+          type: 'string'
+        entityId:
+          type:
+            - 'string'
+            - 'null'
+        requestId:
+          type:
+            - 'string'
+            - 'null'
+        details:
+          type: 'object'
+        createdAt:
+          type: 'string'
+          format: 'date-time'
+    Skill:
+      type: 'object'
+      properties:
+        id:
+          type: 'string'
+          format: 'uuid'
+        code:
+          type: 'string'
+        name:
+          type: 'string'
+    SkillCreate:
+      type: 'object'
+      required:
+        - 'code'
+        - 'name'
+      properties:
+        code:
+          type: 'string'
+          pattern: '^[A-Z][A-Z0-9_]{1,31}$'
+        name:
+          type: 'string'
+    Contract:
+      type: 'object'
+      required:
+        - 'minHoursPerWeek'
+        - 'maxHoursPerWeek'
+        - 'maxConsecutiveDays'
+        - 'minRestHours'
+      properties:
+        minHoursPerWeek:
+          type: 'number'
+          minimum: 0
+        maxHoursPerWeek:
+          type: 'number'
+        overtimeAfterHours:
+          type: 'number'
+          default: 40
+        maxConsecutiveDays:
+          type: 'integer'
+          minimum: 1
+          maximum: 7
+        minRestHours:
+          type: 'number'
+          minimum: 0
+          maximum: 24
+        maxShiftsPerDay:
+          type: 'integer'
+          minimum: 1
+          maximum: 3
+          default: 1
+    SkillGrant:
+      type: 'object'
+      required:
+        - 'skill'
+      properties:
+        skill:
+          type: 'string'
+        expiresOn:
+          type:
+            - 'string'
+            - 'null'
+          format: 'date'
+    Unavailability:
+      type: 'object'
+      required:
+        - 'start'
+        - 'end'
+      properties:
+        start:
+          type: 'string'
+          format: 'date-time'
+        end:
+          type: 'string'
+          format: 'date-time'
+        reason:
+          type: 'string'
+          enum:
+            - 'time_off'
+            - 'unavailable'
+    Preferences:
+      type: 'object'
+      properties:
+        preferredDaysOff:
+          type: 'array'
+          items:
+            type: 'integer'
+            minimum: 1
+            maximum: 7
+        avoidNights:
+          type: 'boolean'
+    EmployeeCreate:
+      type: 'object'
+      required:
+        - 'name'
+        - 'hourlyRateMinor'
+        - 'contract'
+      properties:
+        name:
+          type: 'string'
+        email:
+          type:
+            - 'string'
+            - 'null'
+          format: 'email'
+        hourlyRateMinor:
+          type: 'integer'
+          minimum: 0
+          description: 'Integer minor currency units'
+        contract:
+          '$ref': '#/components/schemas/Contract'
+        skills:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/SkillGrant'
+        unavailability:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/Unavailability'
+        preferences:
+          '$ref': '#/components/schemas/Preferences'
+    EmployeeUpdate:
+      type: 'object'
+      properties:
+        name:
+          type: 'string'
+        email:
+          type:
+            - 'string'
+            - 'null'
+          format: 'email'
+        hourlyRateMinor:
+          type: 'integer'
+          minimum: 0
+          description: 'Integer minor currency units'
+        contract:
+          '$ref': '#/components/schemas/Contract'
+        skills:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/SkillGrant'
+        unavailability:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/Unavailability'
+        preferences:
+          '$ref': '#/components/schemas/Preferences'
+    Employee:
+      type: 'object'
+      properties:
+        id:
+          type: 'string'
+          format: 'uuid'
+        name:
+          type: 'string'
+        email:
+          type:
+            - 'string'
+            - 'null'
+          format: 'email'
+        hourlyRateMinor:
+          type: 'integer'
+          minimum: 0
+          description: 'Integer minor currency units'
+        contract:
+          '$ref': '#/components/schemas/Contract'
+        skills:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/SkillGrant'
+        unavailability:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/Unavailability'
+        preferences:
+          '$ref': '#/components/schemas/Preferences'
+        version:
+          type: 'integer'
+    Roster:
+      type: 'object'
+      properties:
+        id:
+          type: 'string'
+          format: 'uuid'
+        name:
+          type: 'string'
+        weekStart:
+          type: 'string'
+          format: 'date'
+        timezone:
+          type: 'string'
+        status:
+          type: 'string'
+          enum:
+            - 'draft'
+            - 'published'
+            - 'archived'
+        version:
+          type: 'integer'
+        shiftCount:
+          type: 'integer'
+        createdAt:
+          type: 'string'
+          format: 'date-time'
+    RosterCreate:
+      type: 'object'
+      required:
+        - 'name'
+        - 'weekStart'
+        - 'timezone'
+      properties:
+        name:
+          type: 'string'
+        weekStart:
+          type: 'string'
+          format: 'date'
+        timezone:
+          type: 'string'
+    Shift:
+      type: 'object'
+      properties:
+        id:
+          type: 'string'
+          format: 'uuid'
+        label:
+          type: 'string'
+        start:
+          type: 'string'
+          format: 'date-time'
+        end:
+          type: 'string'
+          format: 'date-time'
+        skill:
+          type: 'string'
+        headcount:
+          type: 'integer'
+    ShiftCreate:
+      type: 'object'
+      required:
+        - 'label'
+        - 'start'
+        - 'end'
+        - 'skill'
+        - 'headcount'
+      properties:
+        label:
+          type: 'string'
+        start:
+          type: 'string'
+          format: 'date-time'
+        end:
+          type: 'string'
+          format: 'date-time'
+          description: 'After start, at most 16 h later'
+        skill:
+          type: 'string'
+        headcount:
+          type: 'integer'
+          minimum: 1
+          maximum: 50
+    Assignment:
+      type: 'object'
+      required:
+        - 'shiftId'
+        - 'employeeId'
+      properties:
+        shiftId:
+          type: 'string'
+          format: 'uuid'
+        employeeId:
+          type: 'string'
+          format: 'uuid'
+        pinned:
+          type: 'boolean'
+        source:
+          type: 'string'
+          enum:
+            - 'solver'
+            - 'manual'
+    SolveRequest:
+      type: 'object'
+      properties:
+        seed:
+          type: 'integer'
+          minimum: 0
+          maximum: 4294967295
+          default: 1
+        iterations:
+          type: 'integer'
+          minimum: 0
+          maximum: 500000
+          default: 20000
+          description: 'Capped by SOLVER_MAX_ITERATIONS'
+        keepPinned:
+          type: 'boolean'
+          default: true
+    EvaluateRequest:
+      type: 'object'
+      required:
+        - 'assignments'
+      properties:
+        assignments:
+          type: 'array'
+          maxItems: 5000
+          items:
+            type: 'object'
+            required:
+              - 'shiftId'
+              - 'employeeId'
+            properties:
+              shiftId:
+                type: 'string'
+                format: 'uuid'
+              employeeId:
+                type: 'string'
+                format: 'uuid'
+    AssignmentsReplace:
+      type: 'object'
+      required:
+        - 'assignments'
+      properties:
+        assignments:
+          type: 'array'
+          maxItems: 5000
+          items:
+            type: 'object'
+            required:
+              - 'shiftId'
+              - 'employeeId'
+              - 'pinned'
+            properties:
+              shiftId:
+                type: 'string'
+                format: 'uuid'
+              employeeId:
+                type: 'string'
+                format: 'uuid'
+              pinned:
+                type: 'boolean'
+    Violation:
+      type: 'object'
+      properties:
+        constraint:
+          type: 'string'
+          enum:
+            - 'UNFILLED_SLOT'
+            - 'SKILL_MISSING'
+            - 'SKILL_EXPIRED'
+            - 'UNAVAILABLE'
+            - 'OVERLAP'
+            - 'MIN_REST'
+            - 'MAX_HOURS'
+            - 'MAX_CONSECUTIVE_DAYS'
+            - 'MAX_SHIFTS_PER_DAY'
+            - 'MIN_HOURS'
+            - 'DAY_OFF_PREFERENCE'
+            - 'AVOID_NIGHTS'
+            - 'OVERTIME'
+            - 'FAIRNESS'
+        severity:
+          type: 'string'
+          enum:
+            - 'hard'
+            - 'soft'
+        penalty:
+          type: 'integer'
+        employeeId:
+          type:
+            - 'string'
+            - 'null'
+        shiftIds:
+          type: 'array'
+          items:
+            type: 'string'
+        message:
+          type: 'string'
+    Evaluation:
+      type: 'object'
+      properties:
+        score:
+          type: 'object'
+          properties:
+            hard:
+              type: 'integer'
+            soft:
+              type: 'integer'
+        feasible:
+          type: 'boolean'
+        violations:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/Violation'
+        employees:
+          type: 'array'
+          items:
+            type: 'object'
+            properties:
+              employeeId:
+                type: 'string'
+              shifts:
+                type: 'integer'
+              hours:
+                type: 'number'
+              overtimeHours:
+                type: 'number'
+              costMinor:
+                type: 'integer'
+        metrics:
+          type: 'object'
+          properties:
+            slotsTotal:
+              type: 'integer'
+            slotsFilled:
+              type: 'integer'
+            coverageRatio:
+              type: 'number'
+            totalHours:
+              type: 'number'
+            laborCostMinor:
+              type: 'integer'
+            utilizationStdDev:
+              type: 'number'
+    Schedule:
+      type: 'object'
+      properties:
+        roster:
+          '$ref': '#/components/schemas/Roster'
+        shifts:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/Shift'
+        employees:
+          type: 'array'
+          items:
+            type: 'object'
+            properties:
+              id:
+                type: 'string'
+              name:
+                type: 'string'
+              skills:
+                type: 'array'
+                items:
+                  '$ref': '#/components/schemas/SkillGrant'
+              contract:
+                '$ref': '#/components/schemas/Contract'
+        assignments:
+          type: 'array'
+          items:
+            '$ref': '#/components/schemas/Assignment'
+        evaluation:
+          '$ref': '#/components/schemas/Evaluation'
+    SolverRun:
+      type: 'object'
+      properties:
+        id:
+          type: 'string'
+          format: 'uuid'
+        seed:
+          type: 'integer'
+        iterations:
+          type: 'integer'
+        hardScore:
+          type: 'integer'
+        softScore:
+          type: 'integer'
+        greedyHard:
+          type: 'integer'
+        greedySoft:
+          type: 'integer'
+        coverageRatio:
+          type: 'number'
+        elapsedMs:
+          type: 'integer'
+        createdAt:
+          type: 'string'
+          format: 'date-time'
+    ConstraintCatalog:
+      type: 'object'
+      properties:
+        constraints:
+          type: 'array'
+          items:
+            type: 'object'
+            properties:
+              id:
+                type: 'string'
+              severity:
+                type: 'string'
+              title:
+                type: 'string'
+              unit:
+                type: 'string'
+        defaultWeights:
+          type: 'object'
+          additionalProperties:
+            type: 'number'
