@@ -1,48 +1,54 @@
+import { BoundedStore } from './bounded-store.js';
+
 /**
- * Fixed-window attempt counter for login throttling (ADR-0006). In-process by design:
- * the API runs as a single instance per host; a shared store is a pending hardening item.
+ * In-process authentication throttles (ADR-0006). They hold state per API process, so
+ * they must move to a shared Postgres store (RO-107) before running several instances.
+ * Every method is synchronous: callers reserve an attempt before their first await, so
+ * concurrent requests cannot slip past a check that has not yet recorded them.
  */
 export interface RateLimiter {
   /** Records an attempt; returns seconds to wait when the key is over the limit, else 0. */
   hit(key: string, now?: number): number;
   reset(key: string): void;
+  readonly size: number;
 }
 
 export function createRateLimiter(max: number, windowMs: number, maxKeys = 50_000): RateLimiter {
-  const windows = new Map<string, { start: number; count: number }>();
-
-  const prune = (now: number) => {
-    for (const [key, value] of windows) {
-      if (now - value.start >= windowMs) windows.delete(key);
-    }
-  };
+  const store = new BoundedStore<{ start: number; count: number }>({
+    maxKeys,
+    isExpired: (value, now) => now - value.start >= windowMs,
+  });
 
   return {
     hit(key, now = Date.now()) {
-      if (windows.size >= maxKeys) prune(now);
-      const current = windows.get(key);
+      const current = store.get(key);
       const window =
         !current || now - current.start >= windowMs ? { start: now, count: 0 } : current;
       const next = { start: window.start, count: window.count + 1 };
-      windows.set(key, next);
+      store.set(key, next, now);
       return next.count > max ? Math.ceil((next.start + windowMs - now) / 1000) : 0;
     },
     reset(key) {
-      windows.delete(key);
+      store.delete(key);
+    },
+    get size() {
+      return store.size;
     },
   };
 }
 
 /**
- * Per-key progressive backoff for failed logins: the first `freeAttempts` failures are
- * free, then each further failure locks the key for base * 2^(n - freeAttempts) ms,
- * capped at `maxDelayMs`. The cap bounds how long an attacker can lock out a victim.
+ * Per-key progressive backoff for logins. `attempt` atomically checks the lockout and
+ * records the attempt as a failure (pessimistic reservation); a successful login calls
+ * `reset`. The first `freeAttempts` attempts are free, then each further one locks the key
+ * for base * 2^(n - freeAttempts - 1) ms, capped at `maxDelayMs` so an attacker can only
+ * lock a victim out for a bounded time.
  */
 export interface BackoffLimiter {
-  /** Seconds the key must still wait, or 0 when an attempt is allowed. */
-  check(key: string, now?: number): number;
-  fail(key: string, now?: number): void;
+  /** Seconds the key must still wait (attempt rejected, not recorded), or 0 (recorded). */
+  attempt(key: string, now?: number): number;
   reset(key: string): void;
+  readonly size: number;
 }
 
 export interface BackoffOptions {
@@ -52,40 +58,39 @@ export interface BackoffOptions {
   readonly maxKeys?: number;
 }
 
-export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
-  const maxKeys = options.maxKeys ?? 50_000;
-  const state = new Map<string, { failures: number; lockedUntil: number; lastFailure: number }>();
-  // Failure history is forgotten once a key has been quiet for twice the maximum delay.
-  const forgetAfter = options.maxDelayMs * 2;
+interface BackoffEntry {
+  readonly failures: number;
+  readonly lockedUntil: number;
+  readonly lastFailure: number;
+}
 
-  const prune = (now: number) => {
-    for (const [key, value] of state) {
-      if (now - value.lastFailure >= forgetAfter) state.delete(key);
-    }
-  };
+export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
+  // History is forgotten once a key has been quiet for twice the maximum delay.
+  const forgetAfter = options.maxDelayMs * 2;
+  const store = new BoundedStore<BackoffEntry>({
+    maxKeys: options.maxKeys ?? 50_000,
+    isExpired: (value, now) => now - value.lastFailure >= forgetAfter,
+  });
 
   return {
-    check(key, now = Date.now()) {
-      const entry = state.get(key);
-      if (!entry) return 0;
-      if (now - entry.lastFailure >= forgetAfter) {
-        state.delete(key);
-        return 0;
+    attempt(key, now = Date.now()) {
+      const existing = store.get(key);
+      const previous = existing && now - existing.lastFailure < forgetAfter ? existing : undefined;
+      if (previous && previous.lockedUntil > now) {
+        return Math.ceil((previous.lockedUntil - now) / 1000);
       }
-      return entry.lockedUntil > now ? Math.ceil((entry.lockedUntil - now) / 1000) : 0;
-    },
-    fail(key, now = Date.now()) {
-      if (state.size >= maxKeys) prune(now);
-      const previous = state.get(key);
-      const failures =
-        previous && now - previous.lastFailure < forgetAfter ? previous.failures + 1 : 1;
+      const failures = (previous?.failures ?? 0) + 1;
       const excess = failures - options.freeAttempts;
       const delay =
         excess > 0 ? Math.min(options.maxDelayMs, options.baseDelayMs * 2 ** (excess - 1)) : 0;
-      state.set(key, { failures, lockedUntil: now + delay, lastFailure: now });
+      store.set(key, { failures, lockedUntil: now + delay, lastFailure: now }, now);
+      return 0;
     },
     reset(key) {
-      state.delete(key);
+      store.delete(key);
+    },
+    get size() {
+      return store.size;
     },
   };
 }

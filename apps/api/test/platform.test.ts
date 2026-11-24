@@ -93,7 +93,8 @@ describe('config', () => {
     expect(() => loadConfig({ SESSION_SECRET: 'short' })).toThrow(/DATABASE_URL.*SESSION_SECRET/);
     expect(() => loadConfig({ ...base, NODE_ENV: 'production' })).toThrow(ConfigError);
     expect(
-      loadConfig({ ...base, NODE_ENV: 'production', COOKIE_SECURE: 'true' }).COOKIE_SECURE,
+      loadConfig({ ...base, NODE_ENV: 'production', COOKIE_SECURE: 'true', TRUST_PROXY: '1' })
+        .COOKIE_SECURE,
     ).toBe(true);
   });
 });
@@ -122,7 +123,6 @@ describe('security primitives', () => {
     expect(limiter.hit('k', 20)).toBe(1);
     expect(limiter.hit('k', 1000)).toBe(0);
     limiter.reset('k');
-    expect(limiter.hit('other', 5000)).toBe(0);
-    expect(limiter.hit('third', 9000)).toBe(0);
+    expect(limiter.size).toBe(0);
   });
 });

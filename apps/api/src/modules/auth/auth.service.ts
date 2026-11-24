@@ -3,6 +3,7 @@ import { withTransaction } from '../../db/pool.js';
 import type { AppDeps } from '../../http/context.js';
 import { AppError, tooManyRequests } from '../../http/errors.js';
 import { DUMMY_HASH_PROMISE, hashPassword, verifyPassword } from '../../security/password.js';
+import { ipKey } from '../../security/ip-key.js';
 import { hashToken, randomToken } from '../../security/tokens.js';
 import { recordAudit } from '../audit/audit.service.js';
 import * as repo from './auth.repository.js';
@@ -62,7 +63,7 @@ export async function register(
   input: RegisterInput,
   client: ClientInfo,
 ): Promise<IssuedSession> {
-  throttle(deps.limiters.register.hit(client.ip ?? 'unknown'));
+  throttle(deps.limiters.register.hit(ipKey(client.ip)));
   const passwordHash = await hashPassword(input.password);
   try {
     return await withTransaction(deps.db, async (tx) => {
@@ -97,12 +98,14 @@ export async function login(
   input: LoginInput,
   client: ClientInfo,
 ): Promise<IssuedSession> {
-  const ip = client.ip ?? 'unknown';
+  const ip = ipKey(client.ip);
   const pairKey = `${ip}|${input.email}`;
   const { loginIp, loginPair, loginEmail } = deps.limiters;
+  // All throttles are checked and the attempt reserved synchronously, before any await,
+  // so concurrent requests for the same email are each counted.
   throttle(loginIp.hit(ip));
   throttle(loginPair.hit(pairKey));
-  throttle(loginEmail.check(input.email));
+  throttle(loginEmail.attempt(input.email));
 
   const user = await repo.findUserByEmail(deps.db, input.email);
   // Always run scrypt so response time does not reveal whether the email exists.
@@ -111,7 +114,6 @@ export async function login(
     user?.passwordHash ?? (await DUMMY_HASH_PROMISE),
   );
   if (!user || !valid || !user.isActive) {
-    loginEmail.fail(input.email);
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect');
   }
   // The per-IP window is not reset: a sprayer's occasional success must not clear it.

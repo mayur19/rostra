@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, trustProxySchema } from '../src/config/env.js';
 import { toFastifyTrustProxy } from '../src/app.js';
-import { createBackoffLimiter } from '../src/security/rate-limiter.js';
+import { ipKey } from '../src/security/ip-key.js';
+import { createBackoffLimiter, createRateLimiter } from '../src/security/rate-limiter.js';
 import { createTestContext, truncateAll, type TestContext } from './helpers.js';
 
 const CSRF = { cookie: 'rostra_csrf=t', 'x-csrf-token': 't' };
@@ -69,6 +70,26 @@ describe('login and registration throttling', () => {
     expect((await login(ctx, 'someone-else@example.org', '192.0.2.99')).statusCode).toBe(401);
   });
 
+  it('counts concurrent attempts for one email atomically', async () => {
+    const attempts = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => login(ctx, 'burst@example.org', `192.0.2.${100 + i}`)),
+    );
+    const codes = attempts.map((r) => r.statusCode).sort();
+    // Three free attempts plus the one that starts the lockout reach the password check.
+    expect(codes.filter((c) => c === 401)).toHaveLength(4);
+    expect(codes.filter((c) => c === 429)).toHaveLength(6);
+  });
+
+  it('treats addresses within one IPv6 /64 as a single client', async () => {
+    const codes: number[] = [];
+    for (let i = 1; i <= 5; i += 1) {
+      codes.push(
+        (await login(ctx, `v6-${i}@example.org`, `2001:db8:1:2::${i.toString(16)}`)).statusCode,
+      );
+    }
+    expect(codes).toEqual([401, 401, 401, 401, 429]);
+  });
+
   it('rate-limits registrations per IP', async () => {
     expect((await register(ctx, 'a@example.org', '198.51.100.20')).statusCode).toBe(201);
     expect((await register(ctx, 'b@example.org', '198.51.100.20')).statusCode).toBe(201);
@@ -128,32 +149,75 @@ describe('trusted proxies', () => {
 
 describe('createBackoffLimiter', () => {
   const limiter = () =>
-    createBackoffLimiter({ freeAttempts: 2, baseDelayMs: 1000, maxDelayMs: 8000, maxKeys: 2 });
+    createBackoffLimiter({ freeAttempts: 2, baseDelayMs: 1000, maxDelayMs: 8000, maxKeys: 3 });
 
-  it('doubles the lockout per failure beyond the free attempts, up to the cap', () => {
+  it('doubles the lockout per attempt beyond the free ones, up to the cap', () => {
     const l = limiter();
-    l.fail('k', 0);
-    l.fail('k', 0);
-    expect(l.check('k', 0)).toBe(0);
-    const delays = [1, 2, 4, 8, 8];
-    for (const expected of delays) {
-      l.fail('k', 0);
-      expect(l.check('k', 0)).toBe(expected);
+    expect([l.attempt('k', 0), l.attempt('k', 0)]).toEqual([0, 0]);
+    const waits: number[] = [];
+    let now = 0;
+    for (let i = 0; i < 5; i += 1) {
+      expect(l.attempt('k', now)).toBe(0);
+      waits.push(l.attempt('k', now));
+      now += waits[waits.length - 1]! * 1000;
     }
-    expect(l.check('k', 8000)).toBe(0);
+    expect(waits).toEqual([1, 2, 4, 8, 8]);
   });
 
-  it('resets on success and forgets quiet keys', () => {
+  it('rejects without recording while locked, resets on success and forgets quiet keys', () => {
     const l = limiter();
-    for (let i = 0; i < 4; i += 1) l.fail('k', 0);
+    for (let i = 0; i < 3; i += 1) l.attempt('k', 0);
+    expect(l.attempt('k', 500)).toBe(1);
+    expect(l.attempt('k', 1000)).toBe(0); // lock expired; this attempt locks for 2s
+    expect(l.attempt('k', 1000)).toBe(2);
     l.reset('k');
-    expect(l.check('k', 0)).toBe(0);
-    for (let i = 0; i < 4; i += 1) l.fail('q', 0);
-    expect(l.check('q', 16_000)).toBe(0);
-    l.fail('q', 16_000);
-    expect(l.check('q', 16_000)).toBe(0);
-    l.fail('a', 40_000);
-    l.fail('b', 40_000);
-    expect(l.check('a', 40_000)).toBe(0);
+    expect(l.attempt('k', 1000)).toBe(0);
+    for (let i = 0; i < 4; i += 1) l.attempt('q', 0);
+    expect(l.attempt('q', 16_000)).toBe(0);
+  });
+
+  it('enforces a hard key cap by evicting the oldest keys', () => {
+    const l = limiter();
+    for (const key of ['a', 'b', 'c', 'd', 'e']) l.attempt(key, 0);
+    expect(l.size).toBe(3);
+  });
+});
+
+describe('createRateLimiter key cap and pruning', () => {
+  it('never holds more than maxKeys entries', () => {
+    const limiter = createRateLimiter(1, 1000, 100);
+    for (let i = 0; i < 10_000; i += 1) limiter.hit(`k${i}`, 0);
+    expect(limiter.size).toBe(100);
+  });
+
+  it('prunes expired windows in amortised batches', () => {
+    const limiter = createRateLimiter(1, 1000, 100_000);
+    for (let i = 0; i < 300; i += 1) limiter.hit(`old${i}`, 0);
+    for (let i = 0; i < 256; i += 1) limiter.hit(`new${i}`, 5000);
+    expect(limiter.size).toBeLessThan(556);
+  });
+
+  it('keeps recently touched keys when evicting', () => {
+    const limiter = createRateLimiter(1, 60_000, 2);
+    limiter.hit('victim', 0);
+    limiter.hit('other', 1);
+    limiter.hit('victim', 2); // touched again: now newest
+    limiter.hit('third', 3); // evicts "other", not "victim"
+    expect(limiter.hit('victim', 4)).toBeGreaterThan(0);
+  });
+});
+
+describe('ipKey', () => {
+  it('maps IPv4-mapped IPv6 to IPv4 and IPv6 to its /64', () => {
+    expect(ipKey('203.0.113.5')).toBe('203.0.113.5');
+    expect(ipKey('::ffff:203.0.113.5')).toBe('203.0.113.5');
+    expect(ipKey('::FFFF:198.51.100.7')).toBe('198.51.100.7');
+    expect(ipKey('2001:db8:85a3:0001:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:85a3:1::/64');
+    expect(ipKey('2001:db8:85a3:1::42')).toBe('2001:db8:85a3:1::/64');
+    expect(ipKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipKey('::1')).toBe('0:0:0:0::/64');
+    expect(ipKey('fe80::1%en0')).toBe('fe80:0:0:0::/64');
+    expect(ipKey(undefined)).toBe('unknown');
+    expect(ipKey('not-an-ip')).toBe('unknown');
   });
 });

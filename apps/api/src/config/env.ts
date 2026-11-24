@@ -82,6 +82,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     const details = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new ConfigError(`Invalid configuration: ${details}`);
   }
+  if (parsed.data.NODE_ENV === 'production' && (env.TRUST_PROXY ?? '').trim() === '') {
+    throw new ConfigError(
+      'Invalid configuration: TRUST_PROXY must be set explicitly in production ' +
+        '(false, a hop count, or proxy IPs/CIDRs)',
+    );
+  }
   if (parsed.data.NODE_ENV === 'production' && !parsed.data.COOKIE_SECURE) {
     throw new ConfigError('Invalid configuration: COOKIE_SECURE must be true in production');
   }
