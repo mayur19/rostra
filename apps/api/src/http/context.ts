@@ -2,7 +2,7 @@ import type { Role } from '@rostra/shared';
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config/env.js';
 import type { Db } from '../db/pool.js';
-import type { RateLimiter } from '../security/rate-limiter.js';
+import type { AuthLimiters } from '../security/limiters.js';
 
 export interface AuthContext {
   readonly sessionId: string;
@@ -18,7 +18,7 @@ export interface AppDeps {
   readonly config: AppConfig;
   readonly db: Db;
   readonly logger: Logger;
-  readonly loginLimiter: RateLimiter;
+  readonly limiters: AuthLimiters;
 }
 
 declare module 'fastify' {

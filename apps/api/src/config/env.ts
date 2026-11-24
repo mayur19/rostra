@@ -5,6 +5,36 @@ const booleanString = z
   .default('false')
   .transform((value) => value === 'true');
 
+/**
+ * TRUST_PROXY: `false` (default), a hop count such as `1`, or comma-separated proxy
+ * IPs/CIDRs. `true` (trust every X-Forwarded-For) is rejected because it lets clients
+ * spoof their address and evade per-IP rate limits.
+ */
+export type TrustProxy = false | number | string[];
+
+const IP_OR_CIDR = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
+
+export const trustProxySchema = z
+  .string()
+  .default('false')
+  .transform((raw, ctx): TrustProxy => {
+    const value = raw.trim();
+    if (value === '' || value === 'false') return false;
+    if (/^\d+$/.test(value)) return Number(value);
+    const entries = value
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+    if (value === 'true' || entries.some((entry) => !IP_OR_CIDR.test(entry))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'TRUST_PROXY must be false, a hop count, or a list of proxy IPs/CIDRs',
+      });
+      return z.NEVER;
+    }
+    return entries;
+  });
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_HOST: z.string().default('127.0.0.1'),
@@ -21,6 +51,21 @@ const envSchema = z.object({
     .int()
     .min(1000)
     .default(15 * 60 * 1000),
+  LOGIN_IP_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(50),
+  LOGIN_EMAIL_FREE_ATTEMPTS: z.coerce.number().int().min(1).default(5),
+  LOGIN_EMAIL_BACKOFF_BASE_MS: z.coerce.number().int().min(100).default(30_000),
+  LOGIN_EMAIL_BACKOFF_MAX_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .default(60 * 60 * 1000),
+  REGISTER_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
+  REGISTER_RATE_LIMIT_WINDOW_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .default(60 * 60 * 1000),
+  TRUST_PROXY: trustProxySchema,
   SOLVER_MAX_ITERATIONS: z.coerce.number().int().min(0).default(200_000),
 });
 

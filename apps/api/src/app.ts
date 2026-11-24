@@ -1,6 +1,12 @@
 import cookie from '@fastify/cookie';
-import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
+import Fastify, {
+  type FastifyBaseLogger,
+  type FastifyHttpOptions,
+  type FastifyInstance,
+} from 'fastify';
+import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import type { TrustProxy } from './config/env.js';
 import type { AppDeps } from './http/context.js';
 import { registerAuthHooks } from './http/auth.js';
 import { registerErrorHandler } from './http/error-handler.js';
@@ -15,16 +21,25 @@ import { skillRoutes } from './modules/skills/skills.routes.js';
 
 const REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
+/** A hop count trusts that many proxies nearest the server (same semantics as proxy-addr). */
+export function toFastifyTrustProxy(
+  value: TrustProxy,
+): boolean | string[] | ((a: string, hop: number) => boolean) {
+  if (typeof value === 'number') return (_address, hop) => hop < value;
+  return value;
+}
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({
+  const options: FastifyHttpOptions<Server, FastifyBaseLogger> = {
     loggerInstance: deps.logger as FastifyBaseLogger,
     bodyLimit: 1_048_576,
-    trustProxy: deps.config.NODE_ENV === 'production',
+    trustProxy: toFastifyTrustProxy(deps.config.TRUST_PROXY),
     genReqId: (request) => {
       const incoming = request.headers['x-request-id'];
       return typeof incoming === 'string' && REQUEST_ID.test(incoming) ? incoming : randomUUID();
     },
-  });
+  };
+  const app = Fastify(options) as unknown as FastifyInstance;
 
   await app.register(cookie);
   app.addHook('onSend', async (request, reply) => {

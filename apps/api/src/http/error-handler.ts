@@ -17,15 +17,13 @@ export function registerErrorHandler(app: FastifyInstance): void {
         .send(failure({ code: error.code, message: error.message, details: error.details }));
     }
     if (error instanceof ProblemValidationError) {
-      return reply
-        .status(422)
-        .send(
-          failure({
-            code: 'INVALID_PROBLEM',
-            message: 'Scheduling problem is invalid',
-            details: error.issues,
-          }),
-        );
+      return reply.status(422).send(
+        failure({
+          code: 'INVALID_PROBLEM',
+          message: 'Scheduling problem is invalid',
+          details: error.issues,
+        }),
+      );
     }
     const status =
       'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;

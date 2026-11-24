@@ -1,7 +1,7 @@
 import type { LoginInput, RegisterInput } from '@rostra/shared';
 import { withTransaction } from '../../db/pool.js';
 import type { AppDeps } from '../../http/context.js';
-import { AppError, conflict, tooManyRequests } from '../../http/errors.js';
+import { AppError, tooManyRequests } from '../../http/errors.js';
 import { DUMMY_HASH_PROMISE, hashPassword, verifyPassword } from '../../security/password.js';
 import { hashToken, randomToken } from '../../security/tokens.js';
 import { recordAudit } from '../audit/audit.service.js';
@@ -45,11 +45,24 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+/**
+ * Deliberately vague so the endpoint does not confirm whether an email is registered.
+ * Full uniformity (same response for new and existing emails) needs verified sign-up
+ * through the local outbox, tracked as RO-106.
+ */
+export const REGISTRATION_FAILED_MESSAGE =
+  'Registration could not be completed with the details provided';
+
+function throttle(wait: number): void {
+  if (wait > 0) throw tooManyRequests(wait);
+}
+
 export async function register(
   deps: AppDeps,
   input: RegisterInput,
   client: ClientInfo,
 ): Promise<IssuedSession> {
+  throttle(deps.limiters.register.hit(client.ip ?? 'unknown'));
   const passwordHash = await hashPassword(input.password);
   try {
     return await withTransaction(deps.db, async (tx) => {
@@ -72,7 +85,9 @@ export async function register(
       return issueSession(deps, tx, user, client);
     });
   } catch (error) {
-    if (isUniqueViolation(error)) throw conflict('An account with this email already exists');
+    if (isUniqueViolation(error)) {
+      throw new AppError(400, 'REGISTRATION_FAILED', REGISTRATION_FAILED_MESSAGE);
+    }
     throw error;
   }
 }
@@ -82,9 +97,12 @@ export async function login(
   input: LoginInput,
   client: ClientInfo,
 ): Promise<IssuedSession> {
-  const limiterKey = `${client.ip ?? 'unknown'}|${input.email}`;
-  const wait = deps.loginLimiter.hit(limiterKey);
-  if (wait > 0) throw tooManyRequests(wait);
+  const ip = client.ip ?? 'unknown';
+  const pairKey = `${ip}|${input.email}`;
+  const { loginIp, loginPair, loginEmail } = deps.limiters;
+  throttle(loginIp.hit(ip));
+  throttle(loginPair.hit(pairKey));
+  throttle(loginEmail.check(input.email));
 
   const user = await repo.findUserByEmail(deps.db, input.email);
   // Always run scrypt so response time does not reveal whether the email exists.
@@ -93,9 +111,12 @@ export async function login(
     user?.passwordHash ?? (await DUMMY_HASH_PROMISE),
   );
   if (!user || !valid || !user.isActive) {
+    loginEmail.fail(input.email);
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect');
   }
-  deps.loginLimiter.reset(limiterKey);
+  // The per-IP window is not reset: a sprayer's occasional success must not clear it.
+  loginPair.reset(pairKey);
+  loginEmail.reset(input.email);
   return withTransaction(deps.db, async (tx) => {
     await repo.touchLogin(tx, user.id);
     await recordAudit(tx, {

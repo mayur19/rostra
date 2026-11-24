@@ -2,7 +2,7 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config/env.js';
 import { createPool } from './db/pool.js';
 import { createLogger } from './logger.js';
-import { createRateLimiter } from './security/rate-limiter.js';
+import { createAuthLimiters } from './security/limiters.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -12,7 +12,7 @@ async function main(): Promise<void> {
     config,
     db,
     logger,
-    loginLimiter: createRateLimiter(config.LOGIN_RATE_LIMIT_MAX, config.LOGIN_RATE_LIMIT_WINDOW_MS),
+    limiters: createAuthLimiters(config),
   });
 
   const shutdown = async (signal: string) => {
