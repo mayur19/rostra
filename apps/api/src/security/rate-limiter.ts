@@ -17,7 +17,9 @@ export function createRateLimiter(max: number, windowMs: number, maxKeys = 50_00
   const store = new BoundedStore<{ start: number; count: number }>({
     maxKeys,
     isExpired: (value, now) => now - value.start >= windowMs,
+    isActive: (value, now) => value.count > max && now - value.start < windowMs,
   });
+  const fullWait = Math.ceil(windowMs / 1000);
 
   return {
     hit(key, now = Date.now()) {
@@ -25,7 +27,8 @@ export function createRateLimiter(max: number, windowMs: number, maxKeys = 50_00
       const window =
         !current || now - current.start >= windowMs ? { start: now, count: 0 } : current;
       const next = { start: window.start, count: window.count + 1 };
-      store.set(key, next, now);
+      // Fail closed: if the store is full of active lockouts, treat the key as limited.
+      if (!store.set(key, next, now)) return fullWait;
       return next.count > max ? Math.ceil((next.start + windowMs - now) / 1000) : 0;
     },
     reset(key) {
@@ -70,7 +73,9 @@ export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
   const store = new BoundedStore<BackoffEntry>({
     maxKeys: options.maxKeys ?? 50_000,
     isExpired: (value, now) => now - value.lastFailure >= forgetAfter,
+    isActive: (value, now) => value.lockedUntil > now,
   });
+  const fullWait = Math.ceil(options.maxDelayMs / 1000);
 
   return {
     attempt(key, now = Date.now()) {
@@ -83,8 +88,8 @@ export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
       const excess = failures - options.freeAttempts;
       const delay =
         excess > 0 ? Math.min(options.maxDelayMs, options.baseDelayMs * 2 ** (excess - 1)) : 0;
-      store.set(key, { failures, lockedUntil: now + delay, lastFailure: now }, now);
-      return 0;
+      const stored = store.set(key, { failures, lockedUntil: now + delay, lastFailure: now }, now);
+      return stored ? 0 : fullWait;
     },
     reset(key) {
       store.delete(key);

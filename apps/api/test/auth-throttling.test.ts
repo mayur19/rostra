@@ -207,6 +207,54 @@ describe('createRateLimiter key cap and pruning', () => {
   });
 });
 
+describe('lockouts survive key flooding', () => {
+  it('does not let new keys evict an active fixed-window lockout', () => {
+    const limiter = createRateLimiter(1, 60_000, 3);
+    limiter.hit('attacker', 0);
+    expect(limiter.hit('attacker', 1)).toBeGreaterThan(0);
+    for (let i = 0; i < 10_000; i += 1) limiter.hit(`flood${i}`, 2);
+    expect(limiter.hit('attacker', 3)).toBeGreaterThan(0);
+  });
+
+  it('does not let new keys evict an active backoff lockout', () => {
+    const l = createBackoffLimiter({
+      freeAttempts: 1,
+      baseDelayMs: 60_000,
+      maxDelayMs: 600_000,
+      maxKeys: 3,
+    });
+    l.attempt('victim', 0);
+    l.attempt('victim', 0);
+    expect(l.attempt('victim', 1)).toBe(60);
+    for (let i = 0; i < 10_000; i += 1) l.attempt(`flood${i}`, 2);
+    expect(l.attempt('victim', 3)).toBe(60);
+  });
+
+  it('fails closed with the maximum wait when every slot holds an active lockout', () => {
+    const limiter = createRateLimiter(1, 60_000, 2);
+    for (const key of ['a', 'b']) {
+      limiter.hit(key, 0);
+      limiter.hit(key, 0);
+    }
+    expect(limiter.hit('newcomer', 1)).toBe(60);
+    expect(limiter.size).toBe(2);
+
+    const l = createBackoffLimiter({
+      freeAttempts: 1,
+      baseDelayMs: 1000,
+      maxDelayMs: 90_000,
+      maxKeys: 2,
+    });
+    for (const key of ['a', 'b']) {
+      l.attempt(key, 0);
+      l.attempt(key, 0);
+    }
+    expect(l.attempt('newcomer', 1)).toBe(90);
+    // Once the lockouts lapse, room is made again.
+    expect(l.attempt('newcomer', 5000)).toBe(0);
+  });
+});
+
 describe('ipKey', () => {
   it('maps IPv4-mapped IPv6 to IPv4 and IPv6 to its /64', () => {
     expect(ipKey('203.0.113.5')).toBe('203.0.113.5');
