@@ -1,0 +1,111 @@
+import type { LoginInput, RegisterInput } from '@rostra/shared';
+import { withTransaction } from '../../db/pool.js';
+import type { AppDeps } from '../../http/context.js';
+import { AppError, conflict, tooManyRequests } from '../../http/errors.js';
+import { DUMMY_HASH_PROMISE, hashPassword, verifyPassword } from '../../security/password.js';
+import { hashToken, randomToken } from '../../security/tokens.js';
+import { recordAudit } from '../audit/audit.service.js';
+import * as repo from './auth.repository.js';
+
+export interface ClientInfo {
+  readonly ip: string | null;
+  readonly userAgent: string | null;
+  readonly requestId: string;
+}
+
+export interface IssuedSession {
+  readonly token: string;
+  readonly csrfToken: string;
+  readonly userId: string;
+}
+
+async function issueSession(
+  deps: AppDeps,
+  db: Parameters<typeof repo.insertSession>[0],
+  user: { id: string; organizationId: string },
+  client: ClientInfo,
+): Promise<IssuedSession> {
+  const token = randomToken();
+  const csrfToken = randomToken();
+  await repo.insertSession(db, {
+    id: hashToken(token, deps.config.SESSION_SECRET),
+    userId: user.id,
+    organizationId: user.organizationId,
+    csrfToken,
+    ip: client.ip,
+    userAgent: client.userAgent?.slice(0, 300) ?? null,
+    ttlHours: deps.config.SESSION_TTL_HOURS,
+  });
+  return { token, csrfToken, userId: user.id };
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505'
+  );
+}
+
+export async function register(
+  deps: AppDeps,
+  input: RegisterInput,
+  client: ClientInfo,
+): Promise<IssuedSession> {
+  const passwordHash = await hashPassword(input.password);
+  try {
+    return await withTransaction(deps.db, async (tx) => {
+      const org = await repo.insertOrganization(tx, input.organizationName, input.timezone);
+      const user = await repo.insertUser(tx, {
+        organizationId: org.id,
+        email: input.email,
+        name: input.name,
+        passwordHash,
+        role: 'owner',
+      });
+      await recordAudit(tx, {
+        organizationId: org.id,
+        actorUserId: user.id,
+        action: 'organization.registered',
+        entityType: 'organization',
+        entityId: org.id,
+        requestId: client.requestId,
+      });
+      return issueSession(deps, tx, user, client);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) throw conflict('An account with this email already exists');
+    throw error;
+  }
+}
+
+export async function login(
+  deps: AppDeps,
+  input: LoginInput,
+  client: ClientInfo,
+): Promise<IssuedSession> {
+  const limiterKey = `${client.ip ?? 'unknown'}|${input.email}`;
+  const wait = deps.loginLimiter.hit(limiterKey);
+  if (wait > 0) throw tooManyRequests(wait);
+
+  const user = await repo.findUserByEmail(deps.db, input.email);
+  // Always run scrypt so response time does not reveal whether the email exists.
+  const valid = await verifyPassword(
+    input.password,
+    user?.passwordHash ?? (await DUMMY_HASH_PROMISE),
+  );
+  if (!user || !valid || !user.isActive) {
+    throw new AppError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect');
+  }
+  deps.loginLimiter.reset(limiterKey);
+  return withTransaction(deps.db, async (tx) => {
+    await repo.touchLogin(tx, user.id);
+    await recordAudit(tx, {
+      organizationId: user.organizationId,
+      actorUserId: user.id,
+      action: 'auth.login',
+      entityType: 'user',
+      entityId: user.id,
+      requestId: client.requestId,
+    });
+    return issueSession(deps, tx, user, client);
+  });
+}
