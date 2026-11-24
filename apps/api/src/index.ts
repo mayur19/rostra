@@ -12,7 +12,7 @@ async function main(): Promise<void> {
     config,
     db,
     logger,
-    limiters: createAuthLimiters(config),
+    limiters: createAuthLimiters(config, logger),
   });
 
   const shutdown = async (signal: string) => {

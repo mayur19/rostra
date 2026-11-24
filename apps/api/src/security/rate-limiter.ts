@@ -6,6 +6,11 @@ import { BoundedStore } from './bounded-store.js';
  * Every method is synchronous: callers reserve an attempt before their first await, so
  * concurrent requests cannot slip past a check that has not yet recorded them.
  */
+export interface LimiterStoreOptions {
+  readonly maxKeys?: number;
+  readonly onForcedEviction?: (total: number) => void;
+}
+
 export interface RateLimiter {
   /** Records an attempt; returns seconds to wait when the key is over the limit, else 0. */
   hit(key: string, now?: number): number;
@@ -13,29 +18,33 @@ export interface RateLimiter {
   readonly size: number;
 }
 
-export function createRateLimiter(max: number, windowMs: number, maxKeys = 50_000): RateLimiter {
-  const store = new BoundedStore<{ start: number; count: number }>({
-    maxKeys,
+export function createRateLimiter(
+  max: number,
+  windowMs: number,
+  store: LimiterStoreOptions | number = {},
+): RateLimiter {
+  const opts = typeof store === 'number' ? { maxKeys: store } : store;
+  const entries = new BoundedStore<{ start: number; count: number }>({
+    maxKeys: opts.maxKeys ?? 50_000,
+    onForcedEviction: opts.onForcedEviction,
     isExpired: (value, now) => now - value.start >= windowMs,
-    isActive: (value, now) => value.count > max && now - value.start < windowMs,
+    remainingMs: (value, now) => (value.count > max ? value.start + windowMs - now : 0),
   });
-  const fullWait = Math.ceil(windowMs / 1000);
 
   return {
     hit(key, now = Date.now()) {
-      const current = store.get(key);
+      const current = entries.get(key);
       const window =
         !current || now - current.start >= windowMs ? { start: now, count: 0 } : current;
       const next = { start: window.start, count: window.count + 1 };
-      // Fail closed: if the store is full of active lockouts, treat the key as limited.
-      if (!store.set(key, next, now)) return fullWait;
+      entries.set(key, next, now);
       return next.count > max ? Math.ceil((next.start + windowMs - now) / 1000) : 0;
     },
     reset(key) {
-      store.delete(key);
+      entries.delete(key);
     },
     get size() {
-      return store.size;
+      return entries.size;
     },
   };
 }
@@ -54,11 +63,10 @@ export interface BackoffLimiter {
   readonly size: number;
 }
 
-export interface BackoffOptions {
+export interface BackoffOptions extends LimiterStoreOptions {
   readonly freeAttempts: number;
   readonly baseDelayMs: number;
   readonly maxDelayMs: number;
-  readonly maxKeys?: number;
 }
 
 interface BackoffEntry {
@@ -70,16 +78,16 @@ interface BackoffEntry {
 export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
   // History is forgotten once a key has been quiet for twice the maximum delay.
   const forgetAfter = options.maxDelayMs * 2;
-  const store = new BoundedStore<BackoffEntry>({
+  const entries = new BoundedStore<BackoffEntry>({
     maxKeys: options.maxKeys ?? 50_000,
+    onForcedEviction: options.onForcedEviction,
     isExpired: (value, now) => now - value.lastFailure >= forgetAfter,
-    isActive: (value, now) => value.lockedUntil > now,
+    remainingMs: (value, now) => Math.max(0, value.lockedUntil - now),
   });
-  const fullWait = Math.ceil(options.maxDelayMs / 1000);
 
   return {
     attempt(key, now = Date.now()) {
-      const existing = store.get(key);
+      const existing = entries.get(key);
       const previous = existing && now - existing.lastFailure < forgetAfter ? existing : undefined;
       if (previous && previous.lockedUntil > now) {
         return Math.ceil((previous.lockedUntil - now) / 1000);
@@ -88,14 +96,58 @@ export function createBackoffLimiter(options: BackoffOptions): BackoffLimiter {
       const excess = failures - options.freeAttempts;
       const delay =
         excess > 0 ? Math.min(options.maxDelayMs, options.baseDelayMs * 2 ** (excess - 1)) : 0;
-      const stored = store.set(key, { failures, lockedUntil: now + delay, lastFailure: now }, now);
-      return stored ? 0 : fullWait;
+      entries.set(key, { failures, lockedUntil: now + delay, lastFailure: now }, now);
+      return 0;
     },
     reset(key) {
-      store.delete(key);
+      entries.delete(key);
     },
     get size() {
-      return store.size;
+      return entries.size;
+    },
+  };
+}
+
+/**
+ * Caps how many distinct secondary keys (emails) one primary key (normalised IP or IPv6
+ * /64) may introduce per window, so a single source cannot flood the per-email store.
+ */
+export interface DistinctKeyLimiter {
+  admit(primary: string, secondary: string, now?: number): number;
+  readonly size: number;
+}
+
+export function createDistinctKeyLimiter(
+  maxDistinct: number,
+  windowMs: number,
+  store: LimiterStoreOptions = {},
+): DistinctKeyLimiter {
+  const entries = new BoundedStore<{ start: number; keys: ReadonlySet<string> }>({
+    maxKeys: store.maxKeys ?? 50_000,
+    onForcedEviction: store.onForcedEviction,
+    isExpired: (value, now) => now - value.start >= windowMs,
+    remainingMs: (value, now) =>
+      value.keys.size >= maxDistinct ? value.start + windowMs - now : 0,
+  });
+
+  return {
+    admit(primary, secondary, now = Date.now()) {
+      const current = entries.get(primary);
+      const window =
+        !current || now - current.start >= windowMs
+          ? { start: now, keys: new Set<string>() }
+          : current;
+      if (window.keys.has(secondary)) return 0;
+      if (window.keys.size >= maxDistinct) return Math.ceil((window.start + windowMs - now) / 1000);
+      entries.set(
+        primary,
+        { start: window.start, keys: new Set([...window.keys, secondary]) },
+        now,
+      );
+      return 0;
+    },
+    get size() {
+      return entries.size;
     },
   };
 }

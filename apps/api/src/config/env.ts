@@ -65,6 +65,8 @@ const envSchema = z.object({
     .int()
     .min(1000)
     .default(60 * 60 * 1000),
+  LOGIN_IP_DISTINCT_EMAILS_MAX: z.coerce.number().int().min(1).default(20),
+  LIMITER_MAX_KEYS: z.coerce.number().int().min(10).default(50_000),
   TRUST_PROXY: trustProxySchema,
   SOLVER_MAX_ITERATIONS: z.coerce.number().int().min(0).default(200_000),
 });

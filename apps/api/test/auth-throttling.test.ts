@@ -2,7 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, trustProxySchema } from '../src/config/env.js';
 import { toFastifyTrustProxy } from '../src/app.js';
 import { ipKey } from '../src/security/ip-key.js';
-import { createBackoffLimiter, createRateLimiter } from '../src/security/rate-limiter.js';
+import {
+  createBackoffLimiter,
+  createDistinctKeyLimiter,
+  createRateLimiter,
+} from '../src/security/rate-limiter.js';
 import { createTestContext, truncateAll, type TestContext } from './helpers.js';
 
 const CSRF = { cookie: 'rostra_csrf=t', 'x-csrf-token': 't' };
@@ -207,51 +211,75 @@ describe('createRateLimiter key cap and pruning', () => {
   });
 });
 
-describe('lockouts survive key flooding', () => {
-  it('does not let new keys evict an active fixed-window lockout', () => {
-    const limiter = createRateLimiter(1, 60_000, 3);
-    limiter.hit('attacker', 0);
-    expect(limiter.hit('attacker', 1)).toBeGreaterThan(0);
+describe('limiter store saturation', () => {
+  it('does not let one source evict an active lockout by flooding new keys', () => {
+    const limiter = createRateLimiter(1, 60_000, 50);
+    limiter.hit('locked', 0);
+    expect(limiter.hit('locked', 1)).toBeGreaterThan(0);
+    // Flood with inactive (under-limit) keys: they are evicted before any active entry.
     for (let i = 0; i < 10_000; i += 1) limiter.hit(`flood${i}`, 2);
-    expect(limiter.hit('attacker', 3)).toBeGreaterThan(0);
+    expect(limiter.hit('locked', 3)).toBeGreaterThan(0);
   });
 
-  it('does not let new keys evict an active backoff lockout', () => {
-    const l = createBackoffLimiter({
-      freeAttempts: 1,
-      baseDelayMs: 60_000,
-      maxDelayMs: 600_000,
-      maxKeys: 3,
-    });
-    l.attempt('victim', 0);
-    l.attempt('victim', 0);
-    expect(l.attempt('victim', 1)).toBe(60);
-    for (let i = 0; i < 10_000; i += 1) l.attempt(`flood${i}`, 2);
-    expect(l.attempt('victim', 3)).toBe(60);
-  });
-
-  it('fails closed with the maximum wait when every slot holds an active lockout', () => {
-    const limiter = createRateLimiter(1, 60_000, 2);
-    for (const key of ['a', 'b']) {
-      limiter.hit(key, 0);
-      limiter.hit(key, 0);
-    }
-    expect(limiter.hit('newcomer', 1)).toBe(60);
-    expect(limiter.size).toBe(2);
-
+  it('still admits new users when every slot holds an active lockout', () => {
+    const evictions: number[] = [];
     const l = createBackoffLimiter({
       freeAttempts: 1,
       baseDelayMs: 1000,
-      maxDelayMs: 90_000,
+      maxDelayMs: 600_000,
       maxKeys: 2,
+      onForcedEviction: (total) => evictions.push(total),
     });
-    for (const key of ['a', 'b']) {
-      l.attempt(key, 0);
-      l.attempt(key, 0);
+    l.attempt('long', 0);
+    l.attempt('long', 0);
+    l.attempt('long', 1000);
+    l.attempt('long', 1000); // locked for 2 s
+    l.attempt('short', 0);
+    l.attempt('short', 0); // locked for 1 s
+    expect(l.attempt('newcomer', 100)).toBe(0);
+    expect(evictions).toEqual([1]);
+    // The entry with the least lock time remaining ("short") was the one evicted.
+    expect(l.attempt('long', 200)).toBeGreaterThan(0);
+    expect(l.size).toBe(2);
+  });
+
+  it('caps distinct emails per source address per window', () => {
+    const limiter = createDistinctKeyLimiter(2, 60_000);
+    expect(limiter.admit('ip', 'a', 0)).toBe(0);
+    expect(limiter.admit('ip', 'b', 0)).toBe(0);
+    expect(limiter.admit('ip', 'a', 0)).toBe(0);
+    expect(limiter.admit('ip', 'c', 0)).toBe(60);
+    expect(limiter.admit('other-ip', 'c', 0)).toBe(0);
+    expect(limiter.admit('ip', 'c', 60_000)).toBe(0);
+  });
+});
+
+describe('flooding from one address through the API', () => {
+  let ctx: TestContext;
+  beforeAll(async () => {
+    ctx = await createTestContext({
+      LIMITER_MAX_KEYS: '20',
+      LOGIN_IP_DISTINCT_EMAILS_MAX: '5',
+      LOGIN_IP_RATE_LIMIT_MAX: '1000',
+      LOGIN_RATE_LIMIT_MAX: '1000',
+      LOGIN_EMAIL_FREE_ATTEMPTS: '2',
+    });
+  });
+  afterAll(async () => ctx.close());
+
+  it("neither clears other users' lockouts nor blocks unrelated users", async () => {
+    for (let i = 0; i < 3; i += 1) await login(ctx, 'victim@example.org', '192.0.2.1');
+    expect((await login(ctx, 'victim@example.org', '192.0.2.2')).statusCode).toBe(429);
+
+    const flood: number[] = [];
+    for (let i = 0; i < 200; i += 1) {
+      flood.push((await login(ctx, `flood${i}@example.org`, '203.0.113.66')).statusCode);
     }
-    expect(l.attempt('newcomer', 1)).toBe(90);
-    // Once the lockouts lapse, room is made again.
-    expect(l.attempt('newcomer', 5000)).toBe(0);
+    expect(flood.filter((c) => c === 401)).toHaveLength(5);
+    expect(flood.filter((c) => c === 429)).toHaveLength(195);
+
+    expect((await login(ctx, 'victim@example.org', '192.0.2.3')).statusCode).toBe(429);
+    expect((await login(ctx, 'bystander@example.org', '198.51.100.40')).statusCode).toBe(401);
   });
 });
 

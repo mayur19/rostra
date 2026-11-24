@@ -100,10 +100,11 @@ export async function login(
 ): Promise<IssuedSession> {
   const ip = ipKey(client.ip);
   const pairKey = `${ip}|${input.email}`;
-  const { loginIp, loginPair, loginEmail } = deps.limiters;
+  const { loginIp, loginIpEmails, loginPair, loginEmail } = deps.limiters;
   // All throttles are checked and the attempt reserved synchronously, before any await,
   // so concurrent requests for the same email are each counted.
   throttle(loginIp.hit(ip));
+  throttle(loginIpEmails.admit(ip, input.email));
   throttle(loginPair.hit(pairKey));
   throttle(loginEmail.attempt(input.email));
 
