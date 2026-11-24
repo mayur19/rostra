@@ -39,7 +39,7 @@ CREATE INDEX sessions_user_idx ON sessions (user_id);
 CREATE INDEX sessions_expires_idx ON sessions (expires_at);
 
 CREATE TABLE audit_log (
-  id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id              bigserial PRIMARY KEY,
   organization_id uuid NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
   actor_user_id   uuid REFERENCES users (id) ON DELETE SET NULL,
   action          text NOT NULL,
