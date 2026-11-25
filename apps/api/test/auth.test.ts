@@ -70,7 +70,10 @@ describe('auth', () => {
 
   it('requires a matching CSRF token on mutating requests', async () => {
     const client = new Client(ctx.app);
-    const missing = await client.post('/api/v1/auth/login', { email: 'a@b.co', password: 'x' });
+    const missing = await client.post('/api/v1/auth/login', {
+      email: 'nobody@example.org',
+      password: 'x',
+    });
     expect(missing.statusCode).toBe(403);
     expect(missing.json().error.code).toBe('CSRF_FAILED');
 

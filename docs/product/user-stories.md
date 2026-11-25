@@ -9,7 +9,7 @@ criteria in Given/When/Then form. Stories marked **(done)** are implemented and 
 
 As an organization owner I want to create my organization and account so that I can start scheduling.
 
-- **Given** no account exists for `olivia@ward4b.org`
+- **Given** no account exists for `olivia@ward4b.example`
   **When** I submit organization "Ward 4B", my name, that email, a 14-character password and zone `america/new_york`
   **Then** I receive 201, a session cookie, and my organization's zone is stored as `America/New_York`.
 - **Given** that email is already registered **When** I register again **Then** I get 400 `REGISTRATION_FAILED` with a generic message that does not confirm the account exists.
@@ -35,7 +35,7 @@ As a scheduler I want to sign in so that only I can change my rosters.
 
 ### US-105 Invite colleagues (pending, RO-102)
 
-- **Given** I am an admin **When** I invite `sam@ward4b.org` as scheduler **Then** an outbox message with a single-use link is recorded and Sam can set a password within 7 days.
+- **Given** I am an admin **When** I invite `sam@ward4b.example` as scheduler **Then** an outbox message with a single-use link is recorded and Sam can set a password within 7 days.
 
 ## E2 Workforce model
 
