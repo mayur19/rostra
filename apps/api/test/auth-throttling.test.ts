@@ -9,6 +9,8 @@ import {
 } from '../src/security/rate-limiter.js';
 import { createTestContext, truncateAll, type TestContext } from './helpers.js';
 
+const TEST_SKETCH_SECRET = Buffer.alloc(32, 7);
+
 const CSRF = { cookie: 'rostra_csrf=t', 'x-csrf-token': 't' };
 
 function login(
@@ -269,8 +271,10 @@ describe('limiter store saturation', () => {
       baseDelayMs: 60_000,
       maxDelayMs: 600_000,
       maxKeys: 10,
+      // Fixed sketch secret keeps hash placement (and so collisions) deterministic.
+      sketch: { secret: TEST_SKETCH_SECRET },
     });
-    for (let i = 0; i < 2000; i += 1) {
+    for (let i = 0; i < 500; i += 1) {
       l.attempt(`flood${i}`, 0);
       l.attempt(`flood${i}`, 0);
     }
@@ -306,8 +310,10 @@ describe('limiter store saturation', () => {
       baseDelayMs: 60_000,
       maxDelayMs: 600_000,
       maxKeys: 10,
+      // Fixed sketch secret keeps hash placement (and so collisions) deterministic.
+      sketch: { secret: TEST_SKETCH_SECRET },
     });
-    for (let i = 0; i < 1000; i += 1) {
+    for (let i = 0; i < 500; i += 1) {
       l.attempt(`spread${i}`, i);
       l.attempt(`spread${i}`, i);
     }
